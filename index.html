@@ -143,7 +143,7 @@ const callAI = async (provider, apiKey, messages, options = {}) => {
     });
     const data = await resp.json();
     if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
-    return data.choices?.[0]?.message?.content || "";
+    return (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || "";
   }
 };
 
@@ -174,13 +174,13 @@ function DasaiHunterSFA() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await Promise.resolve(localStorage.getItem("dasai-leads") ? {value: localStorage.getItem("dasai-leads")} : null);
-        if (res?.value) setLeads(JSON.parse(res.value));
+        const res = localStorage.getItem("dasai-leads");
+        if (res) setLeads(JSON.parse(res));
       } catch {}
       try {
-        const res = await Promise.resolve(localStorage.getItem("dasai-ai-config") ? {value: localStorage.getItem("dasai-ai-config")} : null);
-        if (res?.value) {
-          const cfg = JSON.parse(res.value);
+        const res = localStorage.getItem("dasai-ai-config");
+        if (res) {
+          const cfg = JSON.parse(res);
           if (cfg.provider) setAiProvider(cfg.provider);
           if (cfg.apiKeys) setAiApiKeys(cfg.apiKeys);
           if (cfg.model) setAiModel(cfg.model);
@@ -188,8 +188,8 @@ function DasaiHunterSFA() {
         }
       } catch {}
       try {
-        const res = await Promise.resolve(localStorage.getItem("dasai-scan-history") ? {value: localStorage.getItem("dasai-scan-history")} : null);
-        if (res?.value) setScanHistory(JSON.parse(res.value));
+        const res = localStorage.getItem("dasai-scan-history");
+        if (res) setScanHistory(JSON.parse(res));
       } catch {}
       setStorageReady(true);
     })();
@@ -219,7 +219,7 @@ function DasaiHunterSFA() {
     const headers = ["名前","URL","電話","地域","業種","ダサさスコア","SSL","スマホ","デザイン","SNS連携","CMS","CMS危険度","アプローチ","殺し文句","問題点","ステータス","次アクション","次回日程","メモ数","登録日"];
     const rows = data.map(d => [
       d.name, d.url, d.phone, d.region||"", d.industry||"",
-      d.dasaiScore ?? calcDasai(d.scores), d.scores?.security, d.scores?.responsive, d.scores?.design, d.scores?.integration,
+      d.dasaiScore || calcDasai(d.scores), d.scores && d.scores.security, d.scores && d.scores.responsive, d.scores && d.scores.design, d.scores && d.scores.integration,
       d.cms||"", d.cmsRisk||"", d.approach||"", d.killPhrase||"",
       (d.issues||[]).join("／"), d.status||"", d.nextAction||"", d.nextDate||"",
       (d.memos||[]).length, d.addedAt||""
@@ -238,7 +238,7 @@ function DasaiHunterSFA() {
     const headers = ["スキャン日","地域","業種","名前","URL","電話","ダサさスコア","SSL","スマホ","デザイン","SNS","CMS","CMS危険度","アプローチ","殺し文句","問題点"];
     const rows = flat.map(d => [
       d.scanDate, d.region, d.industry, d.name, d.url, d.phone,
-      d.dasaiScore, d.scores?.security, d.scores?.responsive, d.scores?.design, d.scores?.integration,
+      d.dasaiScore, d.scores && d.scores.security, d.scores && d.scores.responsive, d.scores && d.scores.design, d.scores && d.scores.integration,
       d.cms||"", d.cmsRisk||"", d.approach||"", d.killPhrase||"", (d.issues||[]).join("／")
     ]);
     const bom = "\uFEFF";
@@ -387,7 +387,7 @@ approach: "攻め"=集客課題, "守り"=採用課題
       if (parsed.length > 0) {
         // Portal domain filter
         const portalDomains = ["goo-net.com", "carsensor.net", "kakaku.com", "itp.ne.jp", "mapion.co.jp", "navitime.co.jp", "ekiten.jp", "hotpepper.jp", "car-premium.net", "kuruma-ex.jp"];
-        const isPortalUrl = (url) => portalDomains.some(d => url?.includes(d));
+        const isPortalUrl = (url) => portalDomains.some(d => url && url.includes(d));
 
         // Validate and normalize
         const valid = parsed.filter(r => r.name).map(r => ({
@@ -395,14 +395,14 @@ approach: "攻め"=集客課題, "守り"=採用課題
           url: isPortalUrl(r.url) ? "" : (r.url || ""),
           phone: r.phone || "",
           scores: {
-            responsive: Math.min(100, Math.max(0, r.scores?.responsive ?? 40)),
-            design: Math.min(100, Math.max(0, r.scores?.design ?? 40)),
-            security: Math.min(100, Math.max(0, r.scores?.security ?? 40)),
-            integration: Math.min(100, Math.max(0, r.scores?.integration ?? 30)),
+            responsive: Math.min(100, Math.max(0, (r.scores && r.scores.responsive != null) ? r.scores.responsive : 40)),
+            design: Math.min(100, Math.max(0, (r.scores && r.scores.design != null) ? r.scores.design : 40)),
+            security: Math.min(100, Math.max(0, (r.scores && r.scores.security != null) ? r.scores.security : 40)),
+            integration: Math.min(100, Math.max(0, (r.scores && r.scores.integration != null) ? r.scores.integration : 30)),
           },
           issues: Array.isArray(r.issues) ? r.issues : [],
           cms: r.cms || "不明",
-          cmsRisk: Math.min(5, Math.max(1, r.cmsRisk ?? 3)),
+          cmsRisk: Math.min(5, Math.max(1, r.cmsRisk != null ? r.cmsRisk : 3)),
           approach: r.approach === "守り" ? "守り" : "攻め",
           approachReason: r.approachReason || "",
           killPhrase: r.killPhrase || "",
@@ -436,7 +436,7 @@ approach: "攻め"=集客課題, "守り"=採用課題
   const calcDasai = (scores) => {
     if (!scores) return 100;
     const total = CRITERIA.reduce((acc, c) => {
-      const s = scores[c.key] ?? 50;
+      const s = scores[c.key] != null ? scores[c.key] : 50;
       return acc + ((100 - s) * c.weight / 100);
     }, 0);
     return Math.round(total);
@@ -453,7 +453,7 @@ approach: "攻め"=集客課題, "守り"=採用課題
       dasaiScore: result.dasaiScore,
       issues: result.issues || [],
       cms: result.cms || "不明",
-      cmsRisk: result.cmsRisk ?? 3,
+      cmsRisk: result.cmsRisk != null ? result.cmsRisk : 3,
       approach: result.approach || "攻め",
       approachReason: result.approachReason || "",
       killPhrase: result.killPhrase || "",
@@ -470,7 +470,7 @@ approach: "攻め"=集客課題, "守り"=採用課題
 
   const updateLead = (id, updates) => {
     setLeads(prev => prev.map(l => l.id === id ? { ...l, ...updates } : l));
-    if (selectedLead?.id === id) setSelectedLead(prev => ({ ...prev, ...updates }));
+    if (selectedLead && selectedLead.id === id) setSelectedLead(prev => ({ ...prev, ...updates }));
   };
 
   const addMemo = (id) => {
@@ -489,7 +489,7 @@ approach: "攻め"=集客課題, "守り"=採用課題
 
   const deleteLead = (id) => {
     setLeads(prev => prev.filter(l => l.id !== id));
-    if (selectedLead?.id === id) setSelectedLead(null);
+    if (selectedLead && selectedLead.id === id) setSelectedLead(null);
   };
 
   const DasaiBar = ({ score }) => {
@@ -745,7 +745,7 @@ approach: "攻め"=集客課題, "守り"=採用課題
                     <DasaiBar score={r.dasaiScore} />
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginTop: 10 }}>
                       {CRITERIA.map(c => {
-                        const s = r.scores?.[c.key] ?? 50;
+                        const s = (r.scores && r.scores[c.key] != null) ? r.scores[c.key] : 50;
                         const inv = 100 - s;
                         return (
                           <div key={c.key} style={{ background: "#0a0a14", borderRadius: 6, padding: 8, textAlign: "center" }}>
@@ -756,14 +756,14 @@ approach: "攻め"=集客課題, "守り"=採用課題
                         );
                       })}
                     </div>
-                    {r.issues?.length > 0 && (
+                    {r.issues && r.issues.length > 0 && (
                       <div style={{ marginTop: 8, fontSize: 12, color: text2 }}>
                         {r.issues.map((iss, i) => <span key={i} style={{ display: "inline-block", background: "#1a1a2e", borderRadius: 4, padding: "2px 8px", marginRight: 4, marginBottom: 4 }}>⚠️ {iss}</span>)}
                       </div>
                     )}
                     <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                       <ApproachBadge approach={r.approach} />
-                      <CmsBadge cms={r.cms || "不明"} risk={r.cmsRisk ?? 3} />
+                      <CmsBadge cms={r.cms || "不明"} risk={r.cmsRisk != null ? r.cmsRisk : 3} />
                       {r.approachReason && <span style={{ fontSize: 11, color: text2 }}>{r.approachReason}</span>}
                     </div>
                     {r.killPhrase && (
@@ -799,8 +799,8 @@ approach: "攻め"=集客課題, "守り"=採用課題
               {[...leads].sort((a, b) => b.dasaiScore - a.dasaiScore).map(l => (
                 <div key={l.id} onClick={() => { setSelectedLead(l); setMemoText(""); setNextAction(l.nextAction || ""); setNextDate(l.nextDate || ""); }}
                   style={{
-                    background: selectedLead?.id === l.id ? "#1a1a3a" : card,
-                    border: `1px solid ${selectedLead?.id === l.id ? accent + "44" : border}`,
+                    background: (selectedLead && selectedLead.id === l.id) ? "#1a1a3a" : card,
+                    border: `1px solid ${(selectedLead && selectedLead.id === l.id) ? accent + "44" : border}`,
                     borderRadius: 8, padding: 12, marginBottom: 8, cursor: "pointer", transition: "all 0.2s",
                   }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -845,7 +845,7 @@ approach: "攻め"=集客課題, "守り"=採用課題
                   <div style={{ marginTop: 10, marginBottom: 10 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
                       <ApproachBadge approach={l.approach || "攻め"} />
-                      <CmsBadge cms={l.cms || "不明"} risk={l.cmsRisk ?? 3} />
+                      <CmsBadge cms={l.cms || "不明"} risk={l.cmsRisk != null ? l.cmsRisk : 3} />
                     </div>
                     {l.approachReason && <div style={{ fontSize: 11, color: text2, marginBottom: 4 }}>{l.approachReason}</div>}
                     {l.killPhrase && (
@@ -866,7 +866,7 @@ approach: "攻め"=集客課題, "守り"=採用課題
                   </div>
 
                   {/* Issues & Opportunity */}
-                  {l.issues?.length > 0 && (
+                  {l.issues && l.issues.length > 0 && (
                     <div style={{ marginBottom: 10 }}>
                       <div style={{ fontSize: 11, color: text2, marginBottom: 4 }}>問題点</div>
                       {l.issues.map((iss, i) => <div key={i} style={{ fontSize: 12, color: "#ff8888", marginBottom: 2 }}>⚠️ {iss}</div>)}
@@ -970,8 +970,8 @@ approach: "攻め"=集客課題, "守り"=採用課題
                         }}>
                         <div style={{ fontSize: 12, fontWeight: 700 }}>{l.name}</div>
                         <div style={{ fontSize: 10, color: text2 }}>{l.region}</div>
-                        <div style={{ fontSize: 9, color: (l.cmsRisk ?? 3) >= 4 ? "#ef4444" : text2, marginTop: 1 }}>
-                          {(l.cmsRisk ?? 3) >= 4 ? "☠️" : "🔧"} {l.cms || "不明"}
+                        <div style={{ fontSize: 9, color: (l.cmsRisk != null ? l.cmsRisk : 3) >= 4 ? "#ef4444" : text2, marginTop: 1 }}>
+                          {(l.cmsRisk != null ? l.cmsRisk : 3) >= 4 ? "☠️" : "🔧"} {l.cms || "不明"}
                         </div>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 2 }}>
                           <span style={{ fontSize: 11, fontWeight: 900, color: l.dasaiScore >= 70 ? accent : "#f59e0b" }}>
@@ -1025,7 +1025,7 @@ approach: "攻め"=集客課題, "守り"=採用課題
                 style={{ background: card, border: `1px solid ${border}`, borderRadius: 10, padding: 20, cursor: "pointer", textAlign: "center", opacity: scanHistory.length === 0 ? 0.4 : 1 }}>
                 <div style={{ fontSize: 28, marginBottom: 8 }}>🔍</div>
                 <div style={{ fontSize: 14, fontWeight: 700, color: text1 }}>スキャン全履歴CSV</div>
-                <div style={{ fontSize: 12, color: text2 }}>{scanHistory.reduce((a, s) => a + (s.results?.length || 0), 0)}件の診断データ</div>
+                <div style={{ fontSize: 12, color: text2 }}>{scanHistory.reduce((a, s) => a + ((s.results && s.results.length) || 0), 0)}件の診断データ</div>
               </button>
               <button onClick={() => {
                 const json = JSON.stringify({ leads, scanHistory, exportDate: new Date().toISOString() }, null, 2);
@@ -1044,7 +1044,7 @@ approach: "攻め"=集客課題, "守り"=採用課題
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 20 }}>
               {[
                 { label: "総スキャン回数", value: scanHistory.length, color: "#3b82f6" },
-                { label: "発見した企業", value: scanHistory.reduce((a, s) => a + (s.results?.length || 0), 0), color: accent },
+                { label: "発見した企業", value: scanHistory.reduce((a, s) => a + ((s.results && s.results.length) || 0), 0), color: accent },
                 { label: "リード登録", value: leads.length, color: "#f59e0b" },
                 { label: "契約済み", value: leads.filter(l => l.status === "契約").length, color: "#10b981" },
               ].map((s, i) => (
