@@ -52,7 +52,7 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
 // ── AI PROVIDERS ──
 const AI_PROVIDERS = {
   claude: {
-    name: "Claude（内蔵）",
+    name: "Claude直",
     icon: "🟣",
     endpoint: "https://api.anthropic.com/v1/messages",
     models: ["claude-sonnet-4-20250514"],
@@ -64,17 +64,24 @@ const AI_PROVIDERS = {
     icon: "🟠",
     endpoint: "https://openrouter.ai/api/v1/chat/completions",
     models: [
-      "anthropic/claude-sonnet-4",
       "deepseek/deepseek-chat-v3-0324",
       "google/gemini-2.5-flash",
       "qwen/qwen3-235b-a22b",
       "moonshotai/kimi-k2",
+      "anthropic/claude-sonnet-4",
+      "perplexity/sonar-pro",
     ],
     needsKey: true,
     keyPlaceholder: "sk-or-...",
     hasWebSearch: false,
   },
 };
+
+// Search-capable models (Step 1 only)
+const SEARCH_MODELS = [
+  { provider: "claude", model: "claude-sonnet-4-20250514", label: "🟣 Claude直（Web検索あり）", needsKey: "claude" },
+  { provider: "openrouter", model: "perplexity/sonar-pro", label: "🔵 Perplexity Sonar（検索内蔵）", needsKey: "openrouter" },
+];
 
 // Unified API call function
 const callAI = async (provider, apiKey, messages, options = {}) => {
@@ -159,6 +166,7 @@ function DasaiHunterSFA() {
   const [aiProvider, setAiProvider] = useState("claude");
   const [aiApiKeys, setAiApiKeys] = useState({});
   const [aiModel, setAiModel] = useState("");
+  const [searchModel, setSearchModel] = useState(0); // index into SEARCH_MODELS
   const [showSettings, setShowSettings] = useState(false);
   const [scanHistory, setScanHistory] = useState([]); // 蓄積データ
 
@@ -176,6 +184,7 @@ function DasaiHunterSFA() {
           if (cfg.provider) setAiProvider(cfg.provider);
           if (cfg.apiKeys) setAiApiKeys(cfg.apiKeys);
           if (cfg.model) setAiModel(cfg.model);
+          if (cfg.searchModel != null) setSearchModel(cfg.searchModel);
         }
       } catch {}
       try {
@@ -189,19 +198,19 @@ function DasaiHunterSFA() {
   // Save leads
   useEffect(() => {
     if (!storageReady) return;
-    (async () => { try { await localStorage.setItem("dasai-leads", JSON.stringify(leads)); } catch {} })();
+    (async () => { try { localStorage.setItem("dasai-leads", JSON.stringify(leads)); } catch {} })();
   }, [leads, storageReady]);
 
   // Save AI config
   useEffect(() => {
     if (!storageReady) return;
-    (async () => { try { await localStorage.setItem("dasai-ai-config", JSON.stringify({ provider: aiProvider, apiKeys: aiApiKeys, model: aiModel })); } catch {} })();
-  }, [aiProvider, aiApiKeys, aiModel, storageReady]);
+    (async () => { try { localStorage.setItem("dasai-ai-config", JSON.stringify({ provider: aiProvider, apiKeys: aiApiKeys, model: aiModel, searchModel })); } catch {} })();
+  }, [aiProvider, aiApiKeys, aiModel, searchModel, storageReady]);
 
   // Save scan history
   useEffect(() => {
     if (!storageReady) return;
-    (async () => { try { await localStorage.setItem("dasai-scan-history", JSON.stringify(scanHistory)); } catch {} })();
+    (async () => { try { localStorage.setItem("dasai-scan-history", JSON.stringify(scanHistory)); } catch {} })();
   }, [scanHistory, storageReady]);
 
   // ── CSV Export ──
@@ -265,25 +274,31 @@ function DasaiHunterSFA() {
     const r = customRegion || region;
     const ind = customIndustry || industry;
     if (!r || !ind) { setHuntError("地域と業種を選んでください"); return; }
-    const prov = aiProvider;
-    const key = aiApiKeys[prov] || "";
-    const provInfo = AI_PROVIDERS[prov];
-    if (provInfo.needsKey && !key) { setHuntError(`${provInfo.name}のAPIキーを設定してください（⚙️ボタン）`); return; }
-    const model = aiModel || provInfo.models[0];
+
+    // Step 1 uses search-capable model
+    const sm = SEARCH_MODELS[searchModel];
+    const searchKey = aiApiKeys[sm.needsKey] || "";
+    if (!searchKey) { setHuntError(`${sm.label}のAPIキーを設定してください（⚙️ボタン）`); return; }
+
+    // Step 1.5/2 uses selected analysis model
+    const analysisProv = aiProvider;
+    const analysisKey = aiApiKeys[analysisProv] || "";
+    const analysisProvInfo = AI_PROVIDERS[analysisProv];
+    if (analysisProvInfo.needsKey && !analysisKey) { setHuntError(`${analysisProvInfo.name}のAPIキーを設定してください（⚙️ボタン）`); return; }
+    const analysisModel = aiModel || analysisProvInfo.models[0];
 
     setHunting(true);
     setHuntError("");
     setHuntResults([]);
-    setHuntPhase(`${provInfo.icon} ${provInfo.name} で検索中...`);
 
     try {
-      // ── STEP 1: Web検索で店舗を発見 ──
-      setHuntPhase(`🔍 店舗を探索中...（${provInfo.name}）`);
+      // ── STEP 1: Web検索で店舗を発見（Claude/Perplexity固定）──
+      setHuntPhase(`🔍 ${sm.label} で店舗を探索中...`);
       const searchPrompt = `「${r}」にある「${ind}」の店舗・会社を複数検索してください。各店のウェブサイトURL、電話番号、特徴を調べてください。できるだけ多く（5〜8件）見つけてください。個人のウェブサイトを持っている中小企業を優先してください。大手ディーラーやチェーン店は除外してください。閉業・廃業・閉鎖登記された会社は除外してください。現在営業中の店舗のみ含めてください。`;
 
-      const searchText = await callAI(prov, key,
+      const searchText = await callAI(sm.provider, searchKey,
         [{ role: "user", content: searchPrompt }],
-        { model, useWebSearch: true, maxTokens: 4000 }
+        { model: sm.model, useWebSearch: true, maxTokens: 4000 }
       );
 
       if (!searchText || searchText.length < 50) {
@@ -292,9 +307,9 @@ function DasaiHunterSFA() {
         return;
       }
 
-      // ── STEP 1.5: URL一覧をJSON抽出 ──
-      setHuntPhase("📋 店舗リストを整理中...");
-      const listText = await callAI(prov, key,
+      // ── STEP 1.5: URL一覧をJSON抽出（DeepSeek等の安いモデル）──
+      setHuntPhase(`📋 ${analysisProvInfo.icon} ${analysisModel.split("/").pop()} で店舗リスト整理中...`);
+      const listText = await callAI(analysisProv, analysisKey,
         [{ role: "user", content: `以下から店舗名・URL・電話番号を抽出してJSON配列にしてください。
 URLが不明な場合はurlを空文字にしてください。
 重要: goo-net.com, carsensor.net, kakaku.com, itp.ne.jp, mapion.co.jp, navitime.co.jp, ekiten.jp, car-premium.net, kuruma-ex.jp のURLは自社サイトではないので、urlに入れないでください。これらしかない場合はurlを空文字にしてください。
@@ -302,7 +317,7 @@ URLが不明な場合はurlを空文字にしてください。
 ${searchText.substring(0, 5000)}
 
 フォーマット: [{"name":"店名","url":"https://...","phone":"電話番号"}]` }],
-        { model, system: "JSON配列のみ返せ。他の文字は一切不要。", maxTokens: 2000 }
+        { model: analysisModel, system: "JSON配列のみ返せ。他の文字は一切不要。", maxTokens: 2000 }
       );
 
       let shopList = tryParseJSON(listText);
@@ -312,8 +327,8 @@ ${searchText.substring(0, 5000)}
         return;
       }
 
-      // ── STEP 2: 各サイトを個別に分析 ──
-      setHuntPhase(`🏥 ${shopList.length}件のサイトを個別診断中...`);
+      // ── STEP 2: 各サイトを分析（DeepSeek等の安いモデル）──
+      setHuntPhase(`🏥 ${analysisProvInfo.icon} ${analysisModel.split("/").pop()} で${shopList.length}件を診断中...`);
       
       const urlListText = shopList.map((s, i) => 
         `${i+1}. ${s.name} — URL: ${s.url || "不明"} — TEL: ${s.phone || "不明"}`
@@ -349,22 +364,22 @@ JSON配列のみで結果を返してください。説明文不要。
 approach: "攻め"=集客課題, "守り"=採用課題
 良いサイトには高スコアをつけること。`;
 
-      const analyzeText = await callAI(prov, key,
+      const analyzeText = await callAI(analysisProv, analysisKey,
         [{ role: "user", content: analyzePrompt }],
-        { model, useWebSearch: true, maxTokens: 8000 }
+        { model: analysisModel, maxTokens: 8000 }
       );
 
       let parsed = tryParseJSON(analyzeText);
 
       // ── STEP 3: リトライ ──
       if (parsed.length === 0) {
-        setHuntPhase("📊 結果を構造化中...");
-        const retryText = await callAI(prov, key,
+        setHuntPhase(`📊 ${analysisProvInfo.icon} 結果を構造化中...`);
+        const retryText = await callAI(analysisProv, analysisKey,
           [
             { role: "user", content: `以下のサイト分析結果をJSON配列にしてください:\n${analyzeText.substring(0, 6000)}` },
             { role: "assistant", content: "[" },
           ],
-          { model, system: "JSON配列のみ返せ。他の文字は一切入れるな。バッククォートも不要。", maxTokens: 4000 }
+          { model: analysisModel, system: "JSON配列のみ返せ。他の文字は一切入れるな。バッククォートも不要。", maxTokens: 4000 }
         );
         parsed = tryParseJSON("[" + retryText);
       }
@@ -588,47 +603,65 @@ approach: "攻め"=集客課題, "守り"=採用課題
       {showSettings && (
         <div style={{ background: "#0a0a14", borderBottom: `1px solid ${border}`, padding: "16px 24px" }}>
           <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: accent, marginBottom: 12 }}>⚙️ AIプロバイダー設定</div>
-            <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
-              {Object.entries(AI_PROVIDERS).map(([key, p]) => (
-                <button key={key} onClick={() => { setAiProvider(key); setAiModel(""); }} style={{
-                  background: aiProvider === key ? accent + "22" : "#1a1a2e",
-                  color: aiProvider === key ? accent : text2,
-                  border: `1px solid ${aiProvider === key ? accent : border}`,
-                  borderRadius: 6, padding: "8px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer",
-                }}>{p.icon} {p.name}{p.hasWebSearch ? " 🔍" : ""}</button>
-              ))}
-            </div>
-            {AI_PROVIDERS[aiProvider].needsKey && (
-              <div style={{ marginBottom: 10 }}>
-                <label style={{ fontSize: 11, color: text2, display: "block", marginBottom: 4 }}>
-                  {AI_PROVIDERS[aiProvider].name} APIキー
-                </label>
-                <input
-                  type="password"
-                  placeholder={AI_PROVIDERS[aiProvider].keyPlaceholder}
-                  value={aiApiKeys[aiProvider] || ""}
-                  onChange={e => setAiApiKeys(prev => ({ ...prev, [aiProvider]: e.target.value }))}
+            <div style={{ fontSize: 13, fontWeight: 700, color: accent, marginBottom: 12 }}>⚙️ 2層AIルーティング設定</div>
+            
+            {/* API Keys */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+              <div style={{ background: "#12122a", borderRadius: 8, padding: 12, border: `1px solid ${border}` }}>
+                <label style={{ fontSize: 11, color: "#a78bfa", display: "block", marginBottom: 4, fontWeight: 700 }}>🟣 Claude APIキー</label>
+                <input type="password" placeholder="sk-ant-..."
+                  value={aiApiKeys.claude || ""}
+                  onChange={e => setAiApiKeys(prev => ({ ...prev, claude: e.target.value }))}
                   style={{ background: "#1a1a2e", border: `1px solid ${border}`, borderRadius: 6,
-                    padding: "8px 12px", color: text1, fontSize: 13, outline: "none", width: 400, maxWidth: "100%" }}
+                    padding: "8px 12px", color: text1, fontSize: 12, outline: "none", width: "100%" }}
                 />
               </div>
-            )}
-            {AI_PROVIDERS[aiProvider].models.length > 1 && (
-              <div style={{ marginBottom: 10 }}>
-                <label style={{ fontSize: 11, color: text2, display: "block", marginBottom: 4 }}>モデル選択</label>
+              <div style={{ background: "#12122a", borderRadius: 8, padding: 12, border: `1px solid ${border}` }}>
+                <label style={{ fontSize: 11, color: "#f97316", display: "block", marginBottom: 4, fontWeight: 700 }}>🟠 OpenRouter APIキー</label>
+                <input type="password" placeholder="sk-or-..."
+                  value={aiApiKeys.openrouter || ""}
+                  onChange={e => setAiApiKeys(prev => ({ ...prev, openrouter: e.target.value }))}
+                  style={{ background: "#1a1a2e", border: `1px solid ${border}`, borderRadius: 6,
+                    padding: "8px 12px", color: text1, fontSize: 12, outline: "none", width: "100%" }}
+                />
+              </div>
+            </div>
+
+            {/* Step 1: Search Model */}
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#10b981", marginBottom: 6 }}>🔍 Step 1 — 店舗検索（Web検索必須）</div>
+              <div style={{ display: "flex", gap: 6 }}>
+                {SEARCH_MODELS.map((sm, i) => (
+                  <button key={i} onClick={() => setSearchModel(i)} style={{
+                    background: searchModel === i ? "#10b98122" : "#1a1a2e",
+                    color: searchModel === i ? "#10b981" : text2,
+                    border: `1px solid ${searchModel === i ? "#10b981" : border}`,
+                    borderRadius: 6, padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer",
+                  }}>{sm.label}</button>
+                ))}
+              </div>
+            </div>
+
+            {/* Step 1.5/2: Analysis Model */}
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#f59e0b", marginBottom: 6 }}>📊 Step 1.5/2 — 分析・JSON化（安いモデルでOK）</div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <select value={aiProvider} onChange={e => { setAiProvider(e.target.value); setAiModel(""); }}
+                  style={{ background: "#1a1a2e", border: `1px solid ${border}`, borderRadius: 6,
+                    padding: "8px 12px", color: text1, fontSize: 12, cursor: "pointer" }}>
+                  {Object.entries(AI_PROVIDERS).map(([k, p]) => <option key={k} value={k}>{p.icon} {p.name}</option>)}
+                </select>
                 <select value={aiModel || AI_PROVIDERS[aiProvider].models[0]}
                   onChange={e => setAiModel(e.target.value)}
                   style={{ background: "#1a1a2e", border: `1px solid ${border}`, borderRadius: 6,
-                    padding: "8px 12px", color: text1, fontSize: 13, cursor: "pointer" }}>
+                    padding: "8px 12px", color: text1, fontSize: 12, cursor: "pointer", flex: 1 }}>
                   {AI_PROVIDERS[aiProvider].models.map(m => <option key={m} value={m}>{m}</option>)}
                 </select>
               </div>
-            )}
-            <div style={{ fontSize: 11, color: text2 }}>
-              {AI_PROVIDERS[aiProvider].hasWebSearch ? "🔍 Web検索対応 — サイトを実際に訪問して診断" : "📝 テキスト分析のみ — 検索結果から推定判定"}
-              {aiProvider === "claude" && " | APIキー不要（artifact内蔵）"}
-              {aiProvider === "openrouter" && " | 複数モデルを切り替え可能"}
+            </div>
+
+            <div style={{ fontSize: 11, color: text2, background: "#1a1a2e", borderRadius: 6, padding: "8px 12px" }}>
+              💡 検索は実在データが必要 → Claude/Perplexity固定。分析はテキスト処理のみ → DeepSeekで1/20のコスト。
             </div>
           </div>
         </div>
@@ -670,7 +703,7 @@ approach: "攻め"=集客課題, "守り"=採用課題
                 </div>
               </div>
               <button onClick={runHunt} disabled={hunting} style={{ ...btnPrimary, opacity: hunting ? 0.6 : 1, width: "100%" }}>
-                {hunting ? `${AI_PROVIDERS[aiProvider].icon} ${AI_PROVIDERS[aiProvider].name}で調査中...` : `🎯 ダサいサイトを探す（${AI_PROVIDERS[aiProvider].icon} ${AI_PROVIDERS[aiProvider].name}）`}
+                {hunting ? huntPhase : `🎯 ダサいサイトを探す（検索:${SEARCH_MODELS[searchModel].label.split("（")[0]} → 分析:${(aiModel || AI_PROVIDERS[aiProvider].models[0]).split("/").pop()}）`}
               </button>
               {huntError && <div style={{ color: accent, fontSize: 13, marginTop: 8 }}>{huntError}</div>}
             </div>
