@@ -271,9 +271,9 @@ function DasaiHunterSFA() {
   };
 
   const runHunt = async () => {
-    const r = customRegion || region;
+    const searchRegion = customRegion || region;
     const searchIndustry = customIndustry || industry;
-    if (!r || !ind) { setHuntError("地域と業種を選んでください"); return; }
+    if (!searchRegion || !searchIndustry) { setHuntError("地域と業種を選んでください"); return; }
 
     // Step 1 uses search-capable model
     const sm = SEARCH_MODELS[searchModel];
