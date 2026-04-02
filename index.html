@@ -272,7 +272,7 @@ function DasaiHunterSFA() {
 
   const runHunt = async () => {
     const r = customRegion || region;
-    const ind = customIndustry || industry;
+    const searchIndustry = customIndustry || industry;
     if (!r || !ind) { setHuntError("地域と業種を選んでください"); return; }
 
     // Step 1 uses search-capable model
@@ -294,7 +294,7 @@ function DasaiHunterSFA() {
     try {
       // ── STEP 1: Web検索で店舗を発見（Claude/Perplexity固定）──
       setHuntPhase(`🔍 ${sm.label} で店舗を探索中...`);
-      const searchPrompt = `「${r}」にある「${ind}」の店舗・会社を複数検索してください。各店のウェブサイトURL、電話番号、特徴を調べてください。できるだけ多く（5〜8件）見つけてください。個人のウェブサイトを持っている中小企業を優先してください。大手ディーラーやチェーン店は除外してください。閉業・廃業・閉鎖登記された会社は除外してください。現在営業中の店舗のみ含めてください。`;
+      const searchPrompt = `「${searchRegion}」にある「${searchIndustry}」の店舗・会社を複数検索してください。各店のウェブサイトURL、電話番号、特徴を調べてください。できるだけ多く（5〜8件）見つけてください。個人のウェブサイトを持っている中小企業を優先してください。大手ディーラーやチェーン店は除外してください。閉業・廃業・閉鎖登記された会社は除外してください。現在営業中の店舗のみ含めてください。`;
 
       const searchText = await callAI(sm.provider, searchKey,
         [{ role: "user", content: searchPrompt }],
@@ -415,7 +415,7 @@ approach: "攻め"=集客課題, "守り"=採用課題
           // Save to scan history
           setScanHistory(prev => [...prev, {
             id: uid(), date: new Date().toISOString(),
-            region: r, industry: ind,
+            region: searchRegion, industry: searchIndustry,
             provider: `${AI_PROVIDERS[prov].icon} ${AI_PROVIDERS[prov].name}`,
             count: results.length,
             results: results,
