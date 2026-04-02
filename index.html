@@ -1,0 +1,1081 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ダサいサイト HUNTER | AI町医者の営業支援システム</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<style>*{margin:0;padding:0;box-sizing:border-box;}</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useCallback } = React;
+
+const TABS = ["hunt", "leads", "pipeline", "data"];
+const TAB_LABELS = { hunt: "🎯 ハント", leads: "📋 リード一覧", pipeline: "📊 パイプライン", data: "💾 データ管理" };
+
+const STATUS_FLOW = ["未着手", "初回連絡済", "商談中", "提案済", "契約", "失注"];
+const STATUS_COLORS = {
+  "未着手": "#6b7280",
+  "初回連絡済": "#f59e0b",
+  "商談中": "#3b82f6",
+  "提案済": "#8b5cf6",
+  "契約": "#10b981",
+  "失注": "#ef4444",
+};
+
+const CRITERIA = [
+  { key: "responsive", label: "スマホ非対応", icon: "📱", weight: 30 },
+  { key: "design", label: "デザイン古い", icon: "🎨", weight: 25 },
+  { key: "security", label: "SSL/速度", icon: "🔒", weight: 25 },
+  { key: "integration", label: "SNS/Maps未連携", icon: "🔗", weight: 20 },
+];
+
+const REGIONS = [
+  "白河市", "郡山市", "福島市", "いわき市", "那須塩原市",
+  "那覇市", "沖縄市", "宜野湾市", "浦添市", "北谷町",
+  "仙台市", "東京都", "大阪市", "名古屋市", "札幌市"
+];
+
+const INDUSTRIES = [
+  "飲食店", "美容室・理容室", "整体・整骨院", "工務店・リフォーム",
+  "不動産", "歯科医院", "税理士・会計事務所", "自動車整備",
+  "学習塾", "ペットサロン", "写真スタジオ", "旅館・民宿",
+  "農業・直売所", "介護・福祉施設", "士業（弁護士・司法書士）"
+];
+
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+// ── AI PROVIDERS ──
+const AI_PROVIDERS = {
+  claude: {
+    name: "Claude（内蔵）",
+    icon: "🟣",
+    endpoint: "https://api.anthropic.com/v1/messages",
+    models: ["claude-sonnet-4-20250514"],
+    needsKey: true,
+    hasWebSearch: true,
+  },
+  openrouter: {
+    name: "OpenRouter",
+    icon: "🟠",
+    endpoint: "https://openrouter.ai/api/v1/chat/completions",
+    models: [
+      "anthropic/claude-sonnet-4",
+      "deepseek/deepseek-chat-v3-0324",
+      "google/gemini-2.5-flash",
+      "qwen/qwen3-235b-a22b",
+      "moonshotai/kimi-k2",
+    ],
+    needsKey: true,
+    keyPlaceholder: "sk-or-...",
+    hasWebSearch: false,
+  },
+};
+
+// Unified API call function
+const callAI = async (provider, apiKey, messages, options = {}) => {
+  const p = AI_PROVIDERS[provider];
+  if (!p) throw new Error("Unknown provider");
+
+  if (provider === "claude") {
+    // Anthropic format
+    // Anthropic browser access
+    const body = {
+      model: options.model || p.models[0],
+      max_tokens: options.maxTokens || 4000,
+      messages: messages.map(m => ({ role: m.role, content: m.content })),
+    };
+    if (options.system) body.system = options.system;
+    if (options.useWebSearch && p.hasWebSearch) {
+      body.tools = [{ type: "web_search_20250305", name: "web_search" }];
+      body.max_tokens = options.maxTokens || 16000;
+    }
+    const resp = await fetch(p.endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+    // Extract all text from Anthropic response
+    return (data.content || [])
+      .map(b => {
+        if (b.type === "text") return b.text;
+        if (b.type === "tool_result" && Array.isArray(b.content))
+          return b.content.filter(c => c.type === "text").map(c => c.text).join("\n");
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n");
+  } else {
+    // OpenAI-compatible format (OpenRouter)
+    // Anthropic browser access
+    const body = {
+      model: options.model || p.models[0],
+      max_tokens: options.maxTokens || 4000,
+      messages: [],
+    };
+    if (options.system) {
+      body.messages.push({ role: "system", content: options.system });
+    }
+    body.messages.push(...messages.map(m => ({ role: m.role, content: m.content })));
+
+    const headers = {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`,
+      "HTTP-Referer": "https://dasai-hunter.app",
+    };
+    const resp = await fetch(p.endpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+    return data.choices?.[0]?.message?.content || "";
+  }
+};
+
+function DasaiHunterSFA() {
+  const [tab, setTab] = useState("hunt");
+  const [region, setRegion] = useState("");
+  const [industry, setIndustry] = useState("");
+  const [customRegion, setCustomRegion] = useState("");
+  const [customIndustry, setCustomIndustry] = useState("");
+  const [hunting, setHunting] = useState(false);
+  const [huntResults, setHuntResults] = useState([]);
+  const [huntError, setHuntError] = useState("");
+  const [huntPhase, setHuntPhase] = useState("");
+  const [leads, setLeads] = useState([]);
+  const [selectedLead, setSelectedLead] = useState(null);
+  const [memoText, setMemoText] = useState("");
+  const [nextAction, setNextAction] = useState("");
+  const [nextDate, setNextDate] = useState("");
+  const [storageReady, setStorageReady] = useState(false);
+  const [aiProvider, setAiProvider] = useState("claude");
+  const [aiApiKeys, setAiApiKeys] = useState({});
+  const [aiModel, setAiModel] = useState("");
+  const [showSettings, setShowSettings] = useState(false);
+  const [scanHistory, setScanHistory] = useState([]); // 蓄積データ
+
+  // Load from storage
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await Promise.resolve(localStorage.getItem("dasai-leads") ? {value: localStorage.getItem("dasai-leads")} : null);
+        if (res?.value) setLeads(JSON.parse(res.value));
+      } catch {}
+      try {
+        const res = await Promise.resolve(localStorage.getItem("dasai-ai-config") ? {value: localStorage.getItem("dasai-ai-config")} : null);
+        if (res?.value) {
+          const cfg = JSON.parse(res.value);
+          if (cfg.provider) setAiProvider(cfg.provider);
+          if (cfg.apiKeys) setAiApiKeys(cfg.apiKeys);
+          if (cfg.model) setAiModel(cfg.model);
+        }
+      } catch {}
+      try {
+        const res = await Promise.resolve(localStorage.getItem("dasai-scan-history") ? {value: localStorage.getItem("dasai-scan-history")} : null);
+        if (res?.value) setScanHistory(JSON.parse(res.value));
+      } catch {}
+      setStorageReady(true);
+    })();
+  }, []);
+
+  // Save leads
+  useEffect(() => {
+    if (!storageReady) return;
+    (async () => { try { await localStorage.setItem("dasai-leads", JSON.stringify(leads)); } catch {} })();
+  }, [leads, storageReady]);
+
+  // Save AI config
+  useEffect(() => {
+    if (!storageReady) return;
+    (async () => { try { await localStorage.setItem("dasai-ai-config", JSON.stringify({ provider: aiProvider, apiKeys: aiApiKeys, model: aiModel })); } catch {} })();
+  }, [aiProvider, aiApiKeys, aiModel, storageReady]);
+
+  // Save scan history
+  useEffect(() => {
+    if (!storageReady) return;
+    (async () => { try { await localStorage.setItem("dasai-scan-history", JSON.stringify(scanHistory)); } catch {} })();
+  }, [scanHistory, storageReady]);
+
+  // ── CSV Export ──
+  const exportCSV = (data, filename) => {
+    if (!data || data.length === 0) return;
+    const headers = ["名前","URL","電話","地域","業種","ダサさスコア","SSL","スマホ","デザイン","SNS連携","CMS","CMS危険度","アプローチ","殺し文句","問題点","ステータス","次アクション","次回日程","メモ数","登録日"];
+    const rows = data.map(d => [
+      d.name, d.url, d.phone, d.region||"", d.industry||"",
+      d.dasaiScore ?? calcDasai(d.scores), d.scores?.security, d.scores?.responsive, d.scores?.design, d.scores?.integration,
+      d.cms||"", d.cmsRisk||"", d.approach||"", d.killPhrase||"",
+      (d.issues||[]).join("／"), d.status||"", d.nextAction||"", d.nextDate||"",
+      (d.memos||[]).length, d.addedAt||""
+    ]);
+    const bom = "\uFEFF";
+    const csv = bom + [headers, ...rows].map(r => r.map(c => `"${String(c||"").replace(/"/g,'""')}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportScanCSV = () => {
+    const flat = scanHistory.flatMap(s => (s.results||[]).map(r => ({ ...r, region: s.region, industry: s.industry, scanDate: s.date })));
+    if (flat.length === 0) return;
+    const headers = ["スキャン日","地域","業種","名前","URL","電話","ダサさスコア","SSL","スマホ","デザイン","SNS","CMS","CMS危険度","アプローチ","殺し文句","問題点"];
+    const rows = flat.map(d => [
+      d.scanDate, d.region, d.industry, d.name, d.url, d.phone,
+      d.dasaiScore, d.scores?.security, d.scores?.responsive, d.scores?.design, d.scores?.integration,
+      d.cms||"", d.cmsRisk||"", d.approach||"", d.killPhrase||"", (d.issues||[]).join("／")
+    ]);
+    const bom = "\uFEFF";
+    const csv = bom + [headers, ...rows].map(r => r.map(c => `"${String(c||"").replace(/"/g,'""')}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = `dasai-scan-${new Date().toISOString().slice(0,10)}.csv`; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const tryParseJSON = (text) => {
+    if (!text) return [];
+    // Remove markdown fences
+    const cleaned = text.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+    // Try full array match
+    const m = cleaned.match(/\[[\s\S]*\]/);
+    if (m) {
+      try { return JSON.parse(m[0]); } catch {}
+      // Try fixing trailing commas
+      try { return JSON.parse(m[0].replace(/,\s*([}\]])/g, "$1")); } catch {}
+    }
+    // Try individual objects
+    const objs = [];
+    const re = /\{[^{}]*"name"[^{}]*\}/g;
+    let match;
+    while ((match = re.exec(cleaned)) !== null) {
+      try { objs.push(JSON.parse(match[0])); } catch {}
+    }
+    return objs;
+  };
+
+  const runHunt = async () => {
+    const r = customRegion || region;
+    const ind = customIndustry || industry;
+    if (!r || !ind) { setHuntError("地域と業種を選んでください"); return; }
+    const prov = aiProvider;
+    const key = aiApiKeys[prov] || "";
+    const provInfo = AI_PROVIDERS[prov];
+    if (provInfo.needsKey && !key) { setHuntError(`${provInfo.name}のAPIキーを設定してください（⚙️ボタン）`); return; }
+    const model = aiModel || provInfo.models[0];
+
+    setHunting(true);
+    setHuntError("");
+    setHuntResults([]);
+    setHuntPhase(`${provInfo.icon} ${provInfo.name} で検索中...`);
+
+    try {
+      // ── STEP 1: Web検索で店舗を発見 ──
+      setHuntPhase(`🔍 店舗を探索中...（${provInfo.name}）`);
+      const searchPrompt = `「${r}」にある「${ind}」の店舗・会社を複数検索してください。各店のウェブサイトURL、電話番号、特徴を調べてください。できるだけ多く（5〜8件）見つけてください。個人のウェブサイトを持っている中小企業を優先してください。大手ディーラーやチェーン店は除外してください。閉業・廃業・閉鎖登記された会社は除外してください。現在営業中の店舗のみ含めてください。`;
+
+      const searchText = await callAI(prov, key,
+        [{ role: "user", content: searchPrompt }],
+        { model, useWebSearch: true, maxTokens: 4000 }
+      );
+
+      if (!searchText || searchText.length < 50) {
+        setHuntError("検索結果が取得できませんでした。地域や業種を変えてお試しください。");
+        setHunting(false);
+        return;
+      }
+
+      // ── STEP 1.5: URL一覧をJSON抽出 ──
+      setHuntPhase("📋 店舗リストを整理中...");
+      const listText = await callAI(prov, key,
+        [{ role: "user", content: `以下から店舗名・URL・電話番号を抽出してJSON配列にしてください。
+URLが不明な場合はurlを空文字にしてください。
+重要: goo-net.com, carsensor.net, kakaku.com, itp.ne.jp, mapion.co.jp, navitime.co.jp, ekiten.jp, car-premium.net, kuruma-ex.jp のURLは自社サイトではないので、urlに入れないでください。これらしかない場合はurlを空文字にしてください。
+
+${searchText.substring(0, 5000)}
+
+フォーマット: [{"name":"店名","url":"https://...","phone":"電話番号"}]` }],
+        { model, system: "JSON配列のみ返せ。他の文字は一切不要。", maxTokens: 2000 }
+      );
+
+      let shopList = tryParseJSON(listText);
+      if (shopList.length === 0) {
+        setHuntError("店舗リストの抽出に失敗しました。");
+        setHunting(false);
+        return;
+      }
+
+      // ── STEP 2: 各サイトを個別に分析 ──
+      setHuntPhase(`🏥 ${shopList.length}件のサイトを個別診断中...`);
+      
+      const urlListText = shopList.map((s, i) => 
+        `${i+1}. ${s.name} — URL: ${s.url || "不明"} — TEL: ${s.phone || "不明"}`
+      ).join("\n");
+
+      const analyzePrompt = `あなたはウェブサイト診断の専門家です。以下の店舗のサイトを1件ずつ診断してください。
+
+店舗リスト:
+${urlListText}
+
+【絶対に守るルール】
+- 上記の各URLを確認してください。Web検索が使える場合は実際に検索してサイト内容を確認してください。
+- URLが空や不明の場合は「[店舗名] 公式サイト」で検索してURLを探してください
+- httpsで始まるURLがある場合、SSLスコアは80以上にしてください
+- wp-contentがURLやHTML内にある場合、CMSはWordPressと判定してください
+- Instagram/LINE/Facebook/Xのリンクがサイト内にある場合、integrationスコアに反映してください
+- 「サイトなし」は本当にサイトが見つからない場合のみ
+
+【ポータルサイト除外ルール】
+以下のドメインのページは「自社サイト」ではない。
+除外: goo-net.com, carsensor.net, kakaku.com, itp.ne.jp, mapion.co.jp, navitime.co.jp, ekiten.jp, hotpepper.jp, car-premium.net, kuruma-ex.jp
+- 上記のURLをurlフィールドに入れることは禁止
+- 上記しかない場合はcms:"サイトなし"
+
+【除外ルール】
+閉業・廃業した会社、大手ディーラー、全国チェーンはJSON配列に含めない。
+
+JSON配列のみで結果を返してください。説明文不要。
+
+[{"name":"店名","url":"確認したURL","phone":"電話番号","scores":{"responsive":0〜100,"design":0〜100,"security":0〜100,"integration":0〜100},"issues":["問題点"],"cms":"WordPress運用中/WordPress放置/デキテル/hp-ez.com/ホームページビルダー/手打ちHTML/サイトなし/不明","cmsRisk":1〜5,"approach":"攻め/守り","approachReason":"理由","killPhrase":"殺し文句","opportunity":"営業ポイント"}]
+
+スコア: security(http→0〜20,https→80〜100), responsive(テーブル→0〜20,レスポンシブ→60〜80), design(古い→0〜30,モダン→60〜90), integration(SNSゼロ→0〜10,複数→50〜80)
+approach: "攻め"=集客課題, "守り"=採用課題
+良いサイトには高スコアをつけること。`;
+
+      const analyzeText = await callAI(prov, key,
+        [{ role: "user", content: analyzePrompt }],
+        { model, useWebSearch: true, maxTokens: 8000 }
+      );
+
+      let parsed = tryParseJSON(analyzeText);
+
+      // ── STEP 3: リトライ ──
+      if (parsed.length === 0) {
+        setHuntPhase("📊 結果を構造化中...");
+        const retryText = await callAI(prov, key,
+          [
+            { role: "user", content: `以下のサイト分析結果をJSON配列にしてください:\n${analyzeText.substring(0, 6000)}` },
+            { role: "assistant", content: "[" },
+          ],
+          { model, system: "JSON配列のみ返せ。他の文字は一切入れるな。バッククォートも不要。", maxTokens: 4000 }
+        );
+        parsed = tryParseJSON("[" + retryText);
+      }
+
+      if (parsed.length > 0) {
+        // Portal domain filter
+        const portalDomains = ["goo-net.com", "carsensor.net", "kakaku.com", "itp.ne.jp", "mapion.co.jp", "navitime.co.jp", "ekiten.jp", "hotpepper.jp", "car-premium.net", "kuruma-ex.jp"];
+        const isPortalUrl = (url) => portalDomains.some(d => url?.includes(d));
+
+        // Validate and normalize
+        const valid = parsed.filter(r => r.name).map(r => ({
+          ...r,
+          url: isPortalUrl(r.url) ? "" : (r.url || ""),
+          phone: r.phone || "",
+          scores: {
+            responsive: Math.min(100, Math.max(0, r.scores?.responsive ?? 40)),
+            design: Math.min(100, Math.max(0, r.scores?.design ?? 40)),
+            security: Math.min(100, Math.max(0, r.scores?.security ?? 40)),
+            integration: Math.min(100, Math.max(0, r.scores?.integration ?? 30)),
+          },
+          issues: Array.isArray(r.issues) ? r.issues : [],
+          cms: r.cms || "不明",
+          cmsRisk: Math.min(5, Math.max(1, r.cmsRisk ?? 3)),
+          approach: r.approach === "守り" ? "守り" : "攻め",
+          approachReason: r.approachReason || "",
+          killPhrase: r.killPhrase || "",
+          opportunity: r.opportunity || "",
+          id: uid(),
+        }));
+        if (valid.length > 0) {
+          const results = valid.map(r => ({ ...r, dasaiScore: calcDasai(r.scores) }));
+          setHuntResults(results);
+          // Save to scan history
+          setScanHistory(prev => [...prev, {
+            id: uid(), date: new Date().toISOString(),
+            region: r, industry: ind,
+            provider: `${AI_PROVIDERS[prov].icon} ${AI_PROVIDERS[prov].name}`,
+            count: results.length,
+            results: results,
+          }]);
+        } else {
+          setHuntError("有効な店舗データが取得できませんでした。");
+        }
+      } else {
+        setHuntError("解析に失敗しました。別の地域・業種でお試しください。");
+      }
+    } catch (e) {
+      setHuntError(`エラー: ${e.message}`);
+    }
+    setHunting(false);
+    setHuntPhase("");
+  };
+
+  const calcDasai = (scores) => {
+    if (!scores) return 100;
+    const total = CRITERIA.reduce((acc, c) => {
+      const s = scores[c.key] ?? 50;
+      return acc + ((100 - s) * c.weight / 100);
+    }, 0);
+    return Math.round(total);
+  };
+
+  const addToLeads = (result) => {
+    if (leads.find(l => l.url === result.url)) return;
+    setLeads(prev => [...prev, {
+      id: uid(),
+      name: result.name,
+      url: result.url,
+      phone: result.phone || "",
+      scores: result.scores,
+      dasaiScore: result.dasaiScore,
+      issues: result.issues || [],
+      cms: result.cms || "不明",
+      cmsRisk: result.cmsRisk ?? 3,
+      approach: result.approach || "攻め",
+      approachReason: result.approachReason || "",
+      killPhrase: result.killPhrase || "",
+      opportunity: result.opportunity || "",
+      status: "未着手",
+      memos: [],
+      nextAction: "",
+      nextDate: "",
+      region: customRegion || region,
+      industry: customIndustry || industry,
+      addedAt: new Date().toISOString(),
+    }]);
+  };
+
+  const updateLead = (id, updates) => {
+    setLeads(prev => prev.map(l => l.id === id ? { ...l, ...updates } : l));
+    if (selectedLead?.id === id) setSelectedLead(prev => ({ ...prev, ...updates }));
+  };
+
+  const addMemo = (id) => {
+    if (!memoText.trim()) return;
+    const memo = { text: memoText, date: new Date().toISOString() };
+    const lead = leads.find(l => l.id === id);
+    updateLead(id, { memos: [...(lead.memos || []), memo] });
+    setMemoText("");
+  };
+
+  const setAction = (id) => {
+    updateLead(id, { nextAction, nextDate });
+    setNextAction("");
+    setNextDate("");
+  };
+
+  const deleteLead = (id) => {
+    setLeads(prev => prev.filter(l => l.id !== id));
+    if (selectedLead?.id === id) setSelectedLead(null);
+  };
+
+  const DasaiBar = ({ score }) => {
+    const color = score >= 70 ? "#ef4444" : score >= 40 ? "#f59e0b" : "#10b981";
+    const label = score >= 70 ? "超ダサい🔥" : score >= 40 ? "まあまあダサい" : "そこそこ";
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ flex: 1, height: 8, background: "#1a1a2e", borderRadius: 4, overflow: "hidden" }}>
+          <div style={{ width: `${score}%`, height: "100%", background: color, borderRadius: 4, transition: "width 0.5s" }} />
+        </div>
+        <span style={{ fontSize: 12, color, fontWeight: 700, minWidth: 100 }}>{score}点 {label}</span>
+      </div>
+    );
+  };
+
+  const StatusBadge = ({ status, onClick }) => (
+    <span onClick={onClick} style={{
+      display: "inline-block", padding: "3px 10px", borderRadius: 4,
+      background: STATUS_COLORS[status] + "22", color: STATUS_COLORS[status],
+      fontSize: 12, fontWeight: 700, cursor: onClick ? "pointer" : "default",
+      border: `1px solid ${STATUS_COLORS[status]}44`,
+    }}>{status}</span>
+  );
+
+  const ApproachBadge = ({ approach }) => {
+    const isAttack = approach === "攻め";
+    const color = isAttack ? "#f97316" : "#06b6d4";
+    const icon = isAttack ? "⚔️" : "🛡️";
+    const label = isAttack ? "攻め（集客）" : "守り（採用）";
+    return (
+      <span style={{
+        display: "inline-flex", alignItems: "center", gap: 4,
+        padding: "3px 10px", borderRadius: 4,
+        background: color + "18", color: color,
+        fontSize: 11, fontWeight: 700,
+        border: `1px solid ${color}44`,
+      }}>{icon} {label}</span>
+    );
+  };
+
+  const CmsBadge = ({ cms, risk }) => {
+    const riskColor = risk >= 4 ? "#ef4444" : risk >= 3 ? "#f59e0b" : "#10b981";
+    const riskIcon = risk >= 4 ? "☠️" : risk >= 3 ? "⚠️" : "✅";
+    const skulls = "💀".repeat(Math.min(risk, 5));
+    return (
+      <span style={{
+        display: "inline-flex", alignItems: "center", gap: 4,
+        padding: "3px 10px", borderRadius: 4,
+        background: riskColor + "15", color: riskColor,
+        fontSize: 11, fontWeight: 700,
+        border: `1px solid ${riskColor}33`,
+      }}>{riskIcon} {cms} <span style={{ fontSize: 10 }}>{skulls}</span></span>
+    );
+  };
+
+  // ── STYLES ──
+  const bg = "#0a0a14";
+  const card = "#12122a";
+  const border = "#1e1e3a";
+  const accent = "#ff4757";
+  const accentSoft = "#ff475722";
+  const text1 = "#e8e8f0";
+  const text2 = "#8888aa";
+
+  const inputStyle = {
+    background: "#1a1a2e", border: `1px solid ${border}`, borderRadius: 6,
+    padding: "8px 12px", color: text1, fontSize: 14, outline: "none", width: "100%",
+  };
+  const btnPrimary = {
+    background: accent, color: "#fff", border: "none", borderRadius: 6,
+    padding: "10px 24px", fontSize: 14, fontWeight: 700, cursor: "pointer",
+    letterSpacing: 1,
+  };
+  const btnSecondary = {
+    background: "transparent", color: accent, border: `1px solid ${accent}`,
+    borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer",
+  };
+
+  return (
+    <div style={{ background: bg, minHeight: "100vh", color: text1, fontFamily: "'Noto Sans JP', 'Helvetica Neue', sans-serif" }}>
+      {/* Header */}
+      <div style={{ background: card, borderBottom: `1px solid ${border}`, padding: "16px 24px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ fontSize: 28 }}>🕵️</span>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 900, letterSpacing: 2, color: accent }}>ダサいサイト HUNTER</div>
+            <div style={{ fontSize: 11, color: text2, letterSpacing: 1 }}>AI町医者の営業支援システム</div>
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+          <button onClick={() => setShowSettings(!showSettings)} style={{
+            background: showSettings ? accent + "22" : "transparent",
+            color: showSettings ? accent : text2,
+            border: `1px solid ${showSettings ? accent + "44" : "transparent"}`,
+            borderRadius: 6, padding: "8px 12px", fontSize: 13, fontWeight: 700,
+            cursor: "pointer",
+          }}>⚙️</button>
+          {TABS.map(t => (
+            <button key={t} onClick={() => setTab(t)} style={{
+              background: tab === t ? accentSoft : "transparent",
+              color: tab === t ? accent : text2,
+              border: tab === t ? `1px solid ${accent}44` : `1px solid transparent`,
+              borderRadius: 6, padding: "8px 16px", fontSize: 13, fontWeight: 700,
+              cursor: "pointer", transition: "all 0.2s",
+            }}>{TAB_LABELS[t]}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* AI Settings Panel */}
+      {showSettings && (
+        <div style={{ background: "#0a0a14", borderBottom: `1px solid ${border}`, padding: "16px 24px" }}>
+          <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: accent, marginBottom: 12 }}>⚙️ AIプロバイダー設定</div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+              {Object.entries(AI_PROVIDERS).map(([key, p]) => (
+                <button key={key} onClick={() => { setAiProvider(key); setAiModel(""); }} style={{
+                  background: aiProvider === key ? accent + "22" : "#1a1a2e",
+                  color: aiProvider === key ? accent : text2,
+                  border: `1px solid ${aiProvider === key ? accent : border}`,
+                  borderRadius: 6, padding: "8px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer",
+                }}>{p.icon} {p.name}{p.hasWebSearch ? " 🔍" : ""}</button>
+              ))}
+            </div>
+            {AI_PROVIDERS[aiProvider].needsKey && (
+              <div style={{ marginBottom: 10 }}>
+                <label style={{ fontSize: 11, color: text2, display: "block", marginBottom: 4 }}>
+                  {AI_PROVIDERS[aiProvider].name} APIキー
+                </label>
+                <input
+                  type="password"
+                  placeholder={AI_PROVIDERS[aiProvider].keyPlaceholder}
+                  value={aiApiKeys[aiProvider] || ""}
+                  onChange={e => setAiApiKeys(prev => ({ ...prev, [aiProvider]: e.target.value }))}
+                  style={{ background: "#1a1a2e", border: `1px solid ${border}`, borderRadius: 6,
+                    padding: "8px 12px", color: text1, fontSize: 13, outline: "none", width: 400, maxWidth: "100%" }}
+                />
+              </div>
+            )}
+            {AI_PROVIDERS[aiProvider].models.length > 1 && (
+              <div style={{ marginBottom: 10 }}>
+                <label style={{ fontSize: 11, color: text2, display: "block", marginBottom: 4 }}>モデル選択</label>
+                <select value={aiModel || AI_PROVIDERS[aiProvider].models[0]}
+                  onChange={e => setAiModel(e.target.value)}
+                  style={{ background: "#1a1a2e", border: `1px solid ${border}`, borderRadius: 6,
+                    padding: "8px 12px", color: text1, fontSize: 13, cursor: "pointer" }}>
+                  {AI_PROVIDERS[aiProvider].models.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </div>
+            )}
+            <div style={{ fontSize: 11, color: text2 }}>
+              {AI_PROVIDERS[aiProvider].hasWebSearch ? "🔍 Web検索対応 — サイトを実際に訪問して診断" : "📝 テキスト分析のみ — 検索結果から推定判定"}
+              {aiProvider === "claude" && " | APIキー不要（artifact内蔵）"}
+              {aiProvider === "openrouter" && " | 複数モデルを切り替え可能"}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "24px 16px" }}>
+
+        {/* ── HUNT TAB ── */}
+        {tab === "hunt" && (
+          <div>
+            <div style={{ background: card, border: `1px solid ${border}`, borderRadius: 10, padding: 24, marginBottom: 20 }}>
+              <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 16, color: accent }}>🔍 ターゲット検索</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+                <div>
+                  <label style={{ fontSize: 11, color: text2, display: "block", marginBottom: 4 }}>地域</label>
+                  <select value={region} onChange={e => { setRegion(e.target.value); setCustomRegion(""); }}
+                    style={{ ...inputStyle, cursor: "pointer" }}>
+                    <option value="">選択...</option>
+                    {REGIONS.map(r => <option key={r} value={r}>{r}</option>)}
+                    <option value="__custom__">カスタム入力</option>
+                  </select>
+                  {region === "__custom__" && (
+                    <input placeholder="地域名を入力" value={customRegion} onChange={e => setCustomRegion(e.target.value)}
+                      style={{ ...inputStyle, marginTop: 6 }} />
+                  )}
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, color: text2, display: "block", marginBottom: 4 }}>業種</label>
+                  <select value={industry} onChange={e => { setIndustry(e.target.value); setCustomIndustry(""); }}
+                    style={{ ...inputStyle, cursor: "pointer" }}>
+                    <option value="">選択...</option>
+                    {INDUSTRIES.map(i => <option key={i} value={i}>{i}</option>)}
+                    <option value="__custom__">カスタム入力</option>
+                  </select>
+                  {industry === "__custom__" && (
+                    <input placeholder="業種名を入力" value={customIndustry} onChange={e => setCustomIndustry(e.target.value)}
+                      style={{ ...inputStyle, marginTop: 6 }} />
+                  )}
+                </div>
+              </div>
+              <button onClick={runHunt} disabled={hunting} style={{ ...btnPrimary, opacity: hunting ? 0.6 : 1, width: "100%" }}>
+                {hunting ? `${AI_PROVIDERS[aiProvider].icon} ${AI_PROVIDERS[aiProvider].name}で調査中...` : `🎯 ダサいサイトを探す（${AI_PROVIDERS[aiProvider].icon} ${AI_PROVIDERS[aiProvider].name}）`}
+              </button>
+              {huntError && <div style={{ color: accent, fontSize: 13, marginTop: 8 }}>{huntError}</div>}
+            </div>
+
+            {hunting && (
+              <div style={{ textAlign: "center", padding: 40, color: text2 }}>
+                <div style={{ fontSize: 40, marginBottom: 12, animation: "pulse 1.5s infinite" }}>🕵️</div>
+                <div style={{ fontSize: 14 }}>「{customRegion || region}」の「{customIndustry || industry}」を調査中...</div>
+                <div style={{ fontSize: 13, marginTop: 6, color: accent }}>{huntPhase}</div>
+                <style>{`@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }`}</style>
+              </div>
+            )}
+
+            {huntResults.length > 0 && (
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12, color: text2 }}>
+                  🎯 {huntResults.length}件のターゲット発見
+                </div>
+                {huntResults.sort((a, b) => b.dasaiScore - a.dasaiScore).map(r => (
+                  <div key={r.id} style={{
+                    background: card, border: `1px solid ${border}`, borderRadius: 10,
+                    padding: 16, marginBottom: 10, transition: "border-color 0.2s",
+                  }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+                      <div>
+                        <div style={{ fontSize: 15, fontWeight: 700 }}>{r.name}</div>
+                        <a href={r.url} target="_blank" rel="noopener" style={{ fontSize: 12, color: "#6699cc", textDecoration: "none" }}>{r.url}</a>
+                        {r.phone && <div style={{ fontSize: 12, color: text2, marginTop: 2 }}>📞 {r.phone}</div>}
+                      </div>
+                      <button onClick={() => addToLeads(r)}
+                        disabled={leads.find(l => l.url === r.url)}
+                        style={{
+                          ...btnSecondary,
+                          opacity: leads.find(l => l.url === r.url) ? 0.4 : 1,
+                        }}>
+                        {leads.find(l => l.url === r.url) ? "追加済" : "＋ リードに追加"}
+                      </button>
+                    </div>
+                    <DasaiBar score={r.dasaiScore} />
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginTop: 10 }}>
+                      {CRITERIA.map(c => {
+                        const s = r.scores?.[c.key] ?? 50;
+                        const inv = 100 - s;
+                        return (
+                          <div key={c.key} style={{ background: "#0a0a14", borderRadius: 6, padding: 8, textAlign: "center" }}>
+                            <div style={{ fontSize: 16 }}>{c.icon}</div>
+                            <div style={{ fontSize: 10, color: text2, marginBottom: 2 }}>{c.label}</div>
+                            <div style={{ fontSize: 18, fontWeight: 900, color: inv >= 60 ? accent : inv >= 30 ? "#f59e0b" : "#10b981" }}>{inv}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {r.issues?.length > 0 && (
+                      <div style={{ marginTop: 8, fontSize: 12, color: text2 }}>
+                        {r.issues.map((iss, i) => <span key={i} style={{ display: "inline-block", background: "#1a1a2e", borderRadius: 4, padding: "2px 8px", marginRight: 4, marginBottom: 4 }}>⚠️ {iss}</span>)}
+                      </div>
+                    )}
+                    <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <ApproachBadge approach={r.approach} />
+                      <CmsBadge cms={r.cms || "不明"} risk={r.cmsRisk ?? 3} />
+                      {r.approachReason && <span style={{ fontSize: 11, color: text2 }}>{r.approachReason}</span>}
+                    </div>
+                    {r.killPhrase && (
+                      <div style={{ marginTop: 6, fontSize: 13, color: "#fbbf24", background: "#fbbf2410", borderRadius: 6, padding: "8px 12px", borderLeft: "3px solid #fbbf24" }}>
+                        🗡️ <strong>殺し文句:</strong> 「{r.killPhrase}」
+                      </div>
+                    )}
+                    {r.opportunity && (
+                      <div style={{ marginTop: 6, fontSize: 12, color: "#6699cc", background: "#6699cc11", borderRadius: 6, padding: "6px 10px" }}>
+                        💡 {r.opportunity}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── LEADS TAB ── */}
+        {tab === "leads" && (
+          <div style={{ display: "grid", gridTemplateColumns: selectedLead ? "1fr 1fr" : "1fr", gap: 16 }}>
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <div style={{ fontSize: 15, fontWeight: 700, color: accent }}>📋 リード一覧 ({leads.length}件)</div>
+              </div>
+              {leads.length === 0 && (
+                <div style={{ background: card, border: `1px solid ${border}`, borderRadius: 10, padding: 40, textAlign: "center", color: text2 }}>
+                  <div style={{ fontSize: 32, marginBottom: 8 }}>🎯</div>
+                  <div>まずハントタブでターゲットを探しましょう</div>
+                </div>
+              )}
+              {leads.sort((a, b) => b.dasaiScore - a.dasaiScore).map(l => (
+                <div key={l.id} onClick={() => { setSelectedLead(l); setMemoText(""); setNextAction(l.nextAction || ""); setNextDate(l.nextDate || ""); }}
+                  style={{
+                    background: selectedLead?.id === l.id ? "#1a1a3a" : card,
+                    border: `1px solid ${selectedLead?.id === l.id ? accent + "44" : border}`,
+                    borderRadius: 8, padding: 12, marginBottom: 8, cursor: "pointer", transition: "all 0.2s",
+                  }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 700 }}>{l.name}</div>
+                      <div style={{ fontSize: 11, color: text2 }}>{l.region} / {l.industry}</div>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <ApproachBadge approach={l.approach || "攻め"} />
+                      <StatusBadge status={l.status} />
+                      <span style={{ fontSize: 14, fontWeight: 900, color: l.dasaiScore >= 70 ? accent : l.dasaiScore >= 40 ? "#f59e0b" : "#10b981" }}>
+                        {l.dasaiScore}
+                      </span>
+                    </div>
+                  </div>
+                  {l.nextAction && l.nextDate && (
+                    <div style={{ fontSize: 11, color: "#f59e0b", marginTop: 4 }}>
+                      ⏰ {l.nextDate} — {l.nextAction}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Detail Panel */}
+            {selectedLead && (() => {
+              const l = leads.find(x => x.id === selectedLead.id) || selectedLead;
+              return (
+                <div style={{ background: card, border: `1px solid ${border}`, borderRadius: 10, padding: 20, position: "sticky", top: 20, maxHeight: "80vh", overflowY: "auto" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+                    <div>
+                      <div style={{ fontSize: 16, fontWeight: 900 }}>{l.name}</div>
+                      <a href={l.url} target="_blank" rel="noopener" style={{ fontSize: 12, color: "#6699cc" }}>{l.url}</a>
+                      {l.phone && <div style={{ fontSize: 12, color: text2 }}>📞 {l.phone}</div>}
+                    </div>
+                    <button onClick={() => setSelectedLead(null)} style={{ background: "none", border: "none", color: text2, cursor: "pointer", fontSize: 18 }}>✕</button>
+                  </div>
+
+                  <DasaiBar score={l.dasaiScore} />
+
+                  {/* Approach type */}
+                  <div style={{ marginTop: 10, marginBottom: 10 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
+                      <ApproachBadge approach={l.approach || "攻め"} />
+                      <CmsBadge cms={l.cms || "不明"} risk={l.cmsRisk ?? 3} />
+                    </div>
+                    {l.approachReason && <div style={{ fontSize: 11, color: text2, marginBottom: 4 }}>{l.approachReason}</div>}
+                    {l.killPhrase && (
+                      <div style={{ fontSize: 13, color: "#fbbf24", background: "#fbbf2410", borderRadius: 6, padding: "8px 12px", borderLeft: "3px solid #fbbf24" }}>
+                        🗡️ <strong>殺し文句:</strong> 「{l.killPhrase}」
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Status changer */}
+                  <div style={{ marginTop: 12, marginBottom: 12 }}>
+                    <label style={{ fontSize: 11, color: text2, display: "block", marginBottom: 4 }}>ステータス</label>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                      {STATUS_FLOW.map(s => (
+                        <StatusBadge key={s} status={s} onClick={() => updateLead(l.id, { status: s })} />
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Issues & Opportunity */}
+                  {l.issues?.length > 0 && (
+                    <div style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: 11, color: text2, marginBottom: 4 }}>問題点</div>
+                      {l.issues.map((iss, i) => <div key={i} style={{ fontSize: 12, color: "#ff8888", marginBottom: 2 }}>⚠️ {iss}</div>)}
+                    </div>
+                  )}
+                  {l.opportunity && (
+                    <div style={{ fontSize: 12, color: "#6699cc", background: "#6699cc11", borderRadius: 6, padding: "6px 10px", marginBottom: 12 }}>
+                      💡 {l.opportunity}
+                    </div>
+                  )}
+
+                  {/* Next Action */}
+                  <div style={{ marginBottom: 12, background: "#0a0a14", borderRadius: 8, padding: 12 }}>
+                    <div style={{ fontSize: 11, color: text2, marginBottom: 6 }}>⏰ 次のアクション</div>
+                    <input placeholder="次にやること..." value={nextAction} onChange={e => setNextAction(e.target.value)}
+                      style={{ ...inputStyle, marginBottom: 6 }} />
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <input type="date" value={nextDate} onChange={e => setNextDate(e.target.value)}
+                        style={{ ...inputStyle, flex: 1 }} />
+                      <button onClick={() => setAction(l.id)} style={btnSecondary}>設定</button>
+                    </div>
+                    {l.nextAction && (
+                      <div style={{ fontSize: 12, color: "#f59e0b", marginTop: 6 }}>
+                        📌 {l.nextDate} — {l.nextAction}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Memos */}
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ fontSize: 11, color: text2, marginBottom: 6 }}>📝 連絡メモ</div>
+                    <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                      <input placeholder="メモを追加..." value={memoText} onChange={e => setMemoText(e.target.value)}
+                        onKeyDown={e => e.key === "Enter" && addMemo(l.id)}
+                        style={{ ...inputStyle, flex: 1 }} />
+                      <button onClick={() => addMemo(l.id)} style={btnSecondary}>追加</button>
+                    </div>
+                    {(l.memos || []).slice().reverse().map((m, i) => (
+                      <div key={i} style={{ fontSize: 12, color: text1, background: "#0a0a14", borderRadius: 6, padding: "6px 10px", marginBottom: 4 }}>
+                        <span style={{ color: text2 }}>{new Date(m.date).toLocaleDateString("ja-JP")}</span> — {m.text}
+                      </div>
+                    ))}
+                  </div>
+
+                  <button onClick={() => deleteLead(l.id)}
+                    style={{ ...btnSecondary, color: "#ef4444", borderColor: "#ef4444", width: "100%", marginTop: 8 }}>
+                    🗑 リードを削除
+                  </button>
+                </div>
+              );
+            })()}
+          </div>
+        )}
+
+        {/* ── PIPELINE TAB ── */}
+        {tab === "pipeline" && (
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 16, color: accent }}>📊 パイプライン</div>
+
+            {/* Summary Cards */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 20 }}>
+              <div style={{ background: card, border: `1px solid ${border}`, borderRadius: 10, padding: 16, textAlign: "center" }}>
+                <div style={{ fontSize: 28, fontWeight: 900, color: accent }}>{leads.length}</div>
+                <div style={{ fontSize: 12, color: text2 }}>総リード数</div>
+              </div>
+              <div style={{ background: card, border: `1px solid ${border}`, borderRadius: 10, padding: 16, textAlign: "center" }}>
+                <div style={{ fontSize: 28, fontWeight: 900, color: "#f97316" }}>{leads.filter(l => l.approach !== "守り").length}</div>
+                <div style={{ fontSize: 12, color: text2 }}>⚔️ 攻め（集客）</div>
+              </div>
+              <div style={{ background: card, border: `1px solid ${border}`, borderRadius: 10, padding: 16, textAlign: "center" }}>
+                <div style={{ fontSize: 28, fontWeight: 900, color: "#06b6d4" }}>{leads.filter(l => l.approach === "守り").length}</div>
+                <div style={{ fontSize: 12, color: text2 }}>🛡️ 守り（採用）</div>
+              </div>
+              <div style={{ background: card, border: `1px solid ${border}`, borderRadius: 10, padding: 16, textAlign: "center" }}>
+                <div style={{ fontSize: 28, fontWeight: 900, color: "#3b82f6" }}>{leads.filter(l => ["商談中", "提案済"].includes(l.status)).length}</div>
+                <div style={{ fontSize: 12, color: text2 }}>商談中</div>
+              </div>
+              <div style={{ background: card, border: `1px solid ${border}`, borderRadius: 10, padding: 16, textAlign: "center" }}>
+                <div style={{ fontSize: 28, fontWeight: 900, color: "#10b981" }}>{leads.filter(l => l.status === "契約").length}</div>
+                <div style={{ fontSize: 12, color: text2 }}>契約済</div>
+              </div>
+            </div>
+
+            {/* Kanban-style columns */}
+            <div style={{ display: "grid", gridTemplateColumns: `repeat(${STATUS_FLOW.length}, 1fr)`, gap: 8, overflowX: "auto" }}>
+              {STATUS_FLOW.map(status => {
+                const items = leads.filter(l => l.status === status);
+                return (
+                  <div key={status} style={{ background: card, border: `1px solid ${border}`, borderRadius: 8, padding: 10, minWidth: 140 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
+                      <div style={{ width: 8, height: 8, borderRadius: "50%", background: STATUS_COLORS[status] }} />
+                      <span style={{ fontSize: 12, fontWeight: 700, color: STATUS_COLORS[status] }}>{status}</span>
+                      <span style={{ fontSize: 11, color: text2 }}>({items.length})</span>
+                    </div>
+                    {items.map(l => (
+                      <div key={l.id}
+                        onClick={() => { setTab("leads"); setSelectedLead(l); setNextAction(l.nextAction || ""); setNextDate(l.nextDate || ""); }}
+                        style={{
+                          background: "#0a0a14", borderRadius: 6, padding: 8, marginBottom: 6,
+                          cursor: "pointer", borderLeft: `3px solid ${STATUS_COLORS[status]}`,
+                        }}>
+                        <div style={{ fontSize: 12, fontWeight: 700 }}>{l.name}</div>
+                        <div style={{ fontSize: 10, color: text2 }}>{l.region}</div>
+                        <div style={{ fontSize: 9, color: (l.cmsRisk ?? 3) >= 4 ? "#ef4444" : text2, marginTop: 1 }}>
+                          {(l.cmsRisk ?? 3) >= 4 ? "☠️" : "🔧"} {l.cms || "不明"}
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 2 }}>
+                          <span style={{ fontSize: 11, fontWeight: 900, color: l.dasaiScore >= 70 ? accent : "#f59e0b" }}>
+                            ダサさ {l.dasaiScore}
+                          </span>
+                          <span style={{ fontSize: 10 }}>{l.approach === "守り" ? "🛡️" : "⚔️"}</span>
+                        </div>
+                      </div>
+                    ))}
+                    {items.length === 0 && <div style={{ fontSize: 11, color: text2, textAlign: "center", padding: 10 }}>—</div>}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Upcoming Actions */}
+            {leads.filter(l => l.nextAction && l.nextDate).length > 0 && (
+              <div style={{ marginTop: 20, background: card, border: `1px solid ${border}`, borderRadius: 10, padding: 16 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#f59e0b", marginBottom: 10 }}>⏰ 予定アクション</div>
+                {leads.filter(l => l.nextAction && l.nextDate)
+                  .sort((a, b) => a.nextDate.localeCompare(b.nextDate))
+                  .map(l => (
+                    <div key={l.id} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12, marginBottom: 6 }}>
+                      <span style={{ color: text2, minWidth: 80 }}>{l.nextDate}</span>
+                      <span style={{ fontWeight: 700 }}>{l.name}</span>
+                      <span style={{ color: text2 }}>— {l.nextAction}</span>
+                      <StatusBadge status={l.status} />
+                    </div>
+                  ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── DATA TAB ── */}
+        {tab === "data" && (
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 16, color: accent }}>💾 データ管理</div>
+
+            {/* Export buttons */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 20 }}>
+              <button onClick={() => exportCSV(leads, `leads-${new Date().toISOString().slice(0,10)}.csv`)}
+                disabled={leads.length === 0}
+                style={{ background: card, border: `1px solid ${border}`, borderRadius: 10, padding: 20, cursor: "pointer", textAlign: "center", opacity: leads.length === 0 ? 0.4 : 1 }}>
+                <div style={{ fontSize: 28, marginBottom: 8 }}>📋</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: text1 }}>リード一覧CSV</div>
+                <div style={{ fontSize: 12, color: text2 }}>{leads.length}件のリードを出力</div>
+              </button>
+              <button onClick={exportScanCSV}
+                disabled={scanHistory.length === 0}
+                style={{ background: card, border: `1px solid ${border}`, borderRadius: 10, padding: 20, cursor: "pointer", textAlign: "center", opacity: scanHistory.length === 0 ? 0.4 : 1 }}>
+                <div style={{ fontSize: 28, marginBottom: 8 }}>🔍</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: text1 }}>スキャン全履歴CSV</div>
+                <div style={{ fontSize: 12, color: text2 }}>{scanHistory.reduce((a, s) => a + (s.results?.length || 0), 0)}件の診断データ</div>
+              </button>
+              <button onClick={() => {
+                const json = JSON.stringify({ leads, scanHistory, exportDate: new Date().toISOString() }, null, 2);
+                const blob = new Blob([json], { type: "application/json" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a"); a.href = url; a.download = `dasai-hunter-backup-${new Date().toISOString().slice(0,10)}.json`; a.click();
+                URL.revokeObjectURL(url);
+              }} style={{ background: card, border: `1px solid ${border}`, borderRadius: 10, padding: 20, cursor: "pointer", textAlign: "center" }}>
+                <div style={{ fontSize: 28, marginBottom: 8 }}>💽</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: text1 }}>全データバックアップ</div>
+                <div style={{ fontSize: 12, color: text2 }}>JSON形式で保存</div>
+              </button>
+            </div>
+
+            {/* Stats */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 20 }}>
+              {[
+                { label: "総スキャン回数", value: scanHistory.length, color: "#3b82f6" },
+                { label: "発見した企業", value: scanHistory.reduce((a, s) => a + (s.results?.length || 0), 0), color: accent },
+                { label: "リード登録", value: leads.length, color: "#f59e0b" },
+                { label: "契約済み", value: leads.filter(l => l.status === "契約").length, color: "#10b981" },
+              ].map((s, i) => (
+                <div key={i} style={{ background: card, border: `1px solid ${border}`, borderRadius: 10, padding: 16, textAlign: "center" }}>
+                  <div style={{ fontSize: 28, fontWeight: 900, color: s.color }}>{s.value}</div>
+                  <div style={{ fontSize: 11, color: text2 }}>{s.label}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Scan History */}
+            <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12, color: text2 }}>📜 スキャン履歴</div>
+            {scanHistory.length === 0 && (
+              <div style={{ background: card, border: `1px solid ${border}`, borderRadius: 10, padding: 40, textAlign: "center", color: text2 }}>
+                <div style={{ fontSize: 32, marginBottom: 8 }}>🔍</div>
+                <div>まだスキャン履歴がありません</div>
+              </div>
+            )}
+            {scanHistory.slice().reverse().map(scan => (
+              <div key={scan.id} style={{ background: card, border: `1px solid ${border}`, borderRadius: 8, padding: 14, marginBottom: 8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div>
+                    <span style={{ fontSize: 14, fontWeight: 700 }}>{scan.region} × {scan.industry}</span>
+                    <span style={{ fontSize: 12, color: text2, marginLeft: 12 }}>{new Date(scan.date).toLocaleDateString("ja-JP")}</span>
+                    <span style={{ fontSize: 11, color: text2, marginLeft: 8 }}>{scan.provider}</span>
+                  </div>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: accent }}>{scan.count}件</span>
+                </div>
+                <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 6 }}>
+                  {(scan.results || []).map((sr, i) => (
+                    <span key={i} style={{
+                      fontSize: 11, padding: "2px 8px", borderRadius: 4,
+                      background: sr.dasaiScore >= 70 ? "#ef444422" : sr.dasaiScore >= 40 ? "#f59e0b22" : "#10b98122",
+                      color: sr.dasaiScore >= 70 ? "#ef4444" : sr.dasaiScore >= 40 ? "#f59e0b" : "#10b981",
+                    }}>{sr.name} ({sr.dasaiScore})</span>
+                  ))}
+                </div>
+              </div>
+            ))}
+
+            {(scanHistory.length > 0 || leads.length > 0) && (
+              <div style={{ marginTop: 30, padding: 16, border: "1px solid #ef444444", borderRadius: 10 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#ef4444", marginBottom: 8 }}>⚠️ データリセット</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={() => { if(confirm("スキャン履歴を全て削除しますか？")) setScanHistory([]); }}
+                    style={{ background: "transparent", border: "1px solid #ef4444", borderRadius: 6, color: "#ef4444", padding: "6px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                    履歴リセット
+                  </button>
+                  <button onClick={() => { if(confirm("リードを全て削除しますか？")) { setLeads([]); setSelectedLead(null); } }}
+                    style={{ background: "transparent", border: "1px solid #ef4444", borderRadius: 6, color: "#ef4444", padding: "6px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                    リードリセット
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.render(React.createElement(DasaiHunterSFA), document.getElementById('root'));
+</script>
+</body>
+</html>
