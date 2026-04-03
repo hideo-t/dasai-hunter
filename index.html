@@ -331,6 +331,50 @@ ${searchText.substring(0, 5000)}
         return;
       }
 
+      // ── STEP 1.6: URLなし店舗をフル社名+電話番号で再検索 ──
+      const noUrlShops = shopList.filter(s => !s.url || s.url.trim() === "");
+      if (noUrlShops.length > 0) {
+        setHuntPhase(`🔎 URLなし ${noUrlShops.length}件をフル社名・電話番号で再検索中...`);
+
+        const resolvePrompt = `以下の会社・店舗について、GoogleマップとWeb検索で公式サイトURLを探してください。
+
+${noUrlShops.map((s, i) => `${i+1}. 社名: ${s.name}　電話: ${s.phone || "不明"}`).join("\n")}
+
+【検索手順】各店舗について：
+1. 「有限会社○○」「株式会社○○」など法人格を含むフル社名で検索
+2. Googleマップで社名を検索し、ビジネスプロフィールのWebサイト欄を確認
+3. 電話番号で検索して一致する公式サイトを探す（例: "098-938-7255 公式サイト"）
+4. 見つかったURLと電話番号が一致するか確認してからurlに記入
+
+重要: ポータルサイト(mapion, ekiten, itp.ne.jpなど)は除外。自社ドメインのみ。
+見つからない場合はurlを空文字のまま。
+
+JSON配列のみ返すこと:
+[{"name":"店名","url":"https://...","phone":"電話番号"}]`;
+
+        const resolveText = await callAI(sm.provider, searchKey,
+          [{ role: "user", content: resolvePrompt }],
+          { model: sm.model, useWebSearch: true, maxTokens: 3000 }
+        );
+
+        const resolved = tryParseJSON(resolveText);
+        if (resolved.length > 0) {
+          // URLが見つかったものだけ更新
+          shopList = shopList.map(s => {
+            const found = resolved.find(r =>
+              r.name && s.name && (
+                r.name.includes(s.name) || s.name.includes(r.name) ||
+                (r.phone && s.phone && r.phone.replace(/[-\s]/g,"") === s.phone.replace(/[-\s]/g,""))
+              )
+            );
+            if (found && found.url && found.url.trim() !== "") {
+              return { ...s, url: found.url };
+            }
+            return s;
+          });
+        }
+      }
+
       // ── STEP 2: 各サイトを分析（DeepSeek等の安いモデル）──
       setHuntPhase(`🏥 ${analysisProvInfo.icon} ${analysisModel.split("/").pop()} で${shopList.length}件を診断中...`);
       
@@ -347,11 +391,17 @@ ${urlListText}
 各店舗について以下の順番で検索し、自社サイトを探してください。
 1. URLが記載されている場合 → そのURLを確認
 2. URLが空・不明の場合 → 以下を順番に検索して自社サイトを探す
-   a. 「[店名] 公式サイト」
-   b. 「[店名] ホームページ」
-   c. 「[店名] [会社名の読み方] site:.co.jp OR site:.com OR site:.jp」
-   d. 「[店名]」だけで検索してトップに出るドメインを確認
+   a. 「有限会社○○」「株式会社○○」など法人格を含むフル社名で検索（最重要）
+   b. 「[フル社名] 公式サイト」「[フル社名] ホームページ」
+   c. 電話番号で検索: 「[電話番号] 会社」→ 一致するサイトを確認
+   d. Googleマップで社名検索 → ビジネスプロフィールのWebサイト欄を確認
+   e. 「[社名] site:.co.jp OR site:.com OR site:.jp」
 3. 上記すべて試しても見つからない場合のみ → cms:"サイトなし"
+
+【フル社名・電話番号照合（重要）】
+- 「西自動車商会」ではなく「有限会社西自動車商会」のように法人格込みで検索すること
+- 電話番号が一致するページを優先して採用すること
+- GoogleマップのビジネスプロフィールにWebサイトURLが載っている場合は必ず採用
 
 【絶対に守るルール】
 - 「サイトなし」は最終手段。上記4パターンを全て試してから判定すること
