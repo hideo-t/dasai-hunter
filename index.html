@@ -242,6 +242,8 @@ function DasaiHunterSFA() {
   const [jaspaPhase, setJaspaPhase] = useState("");
   const [jaspaResults, setJaspaResults] = useState([]);
   const [jaspaError, setJaspaError] = useState("");
+  const [jaspaManualMode, setJaspaManualMode] = useState(false);
+  const [jaspaManualInput, setJaspaManualInput] = useState("");
 
   // Load from storage
   useEffect(() => {
@@ -640,8 +642,33 @@ JSONのみ返してください（説明文不要）:
       );
 
       let members = tryParseJSON(listText);
+
+      // ── STEP 1B: フォールバック — Web検索で直接探す ──
       if (members.length === 0) {
-        setJaspaError("会員リストの取得に失敗しました。振興会サイトが取得できない可能性があります。");
+        setJaspaPhase(`🔄 URL直接取得失敗。「${jaspaRegion} 整備振興会 会員」でWeb検索中...`);
+        const fallbackPrompt = `「${jaspaRegion}」の自動車整備振興会・商工組合の会員工場をWeb検索で探してください。
+
+以下の検索クエリを順番に試してください：
+1. "${jaspaRegion} 自動車整備振興会 会員工場一覧"
+2. "${jaspaRegion} 整備振興会 加盟工場"
+3. "${jaspaRegion} 自動車整備 認証工場 一覧"
+
+参照URL（アクセスできれば参照）: ${targetUrl}
+
+見つけた工場の「工場名・電話番号・WebサイトURL（あれば）・住所（あれば）」を最大限多く抽出してください。URLがない工場もリストに含めてください（urlは空文字）。
+
+JSONのみ返してください（説明文不要）:
+[{"name":"工場名","phone":"電話番号","url":"","address":"住所"}]`;
+
+        const fallbackText = await callAI(sm.provider, searchKey,
+          [{ role: "user", content: fallbackPrompt }],
+          { model: sm.model, useWebSearch: true, maxTokens: 6000 }
+        );
+        members = tryParseJSON(fallbackText);
+      }
+
+      if (members.length === 0) {
+        setJaspaError("会員リストの自動取得に失敗しました。\n▶ 下の「📝 手動入力」で工場名・電話番号を直接貼り付けてスキャンできます。");
         setJaspaScanning(false); return;
       }
 
@@ -692,6 +719,83 @@ JSONのみ返してください:
           id: uid(),
           errorType: ["ssl","dns","notfound","nosite","ok"].includes(r.errorType) ? r.errorType : "nosite",
           jaspaSource: jaspaInfo.url,
+          ken: jaspaRegion,
+        }));
+        setJaspaResults(results);
+      } else {
+        setJaspaError("チェック結果の取得に失敗しました。");
+      }
+    } catch(e) {
+      setJaspaError(`エラー: ${e.message}`);
+    }
+    setJaspaScanning(false);
+    setJaspaPhase("");
+  };
+
+  // ── 振興会スキャン（手動入力モード）──
+  const runJaspaManual = async () => {
+    if (!jaspaManualInput.trim()) { setJaspaError("工場リストを入力してください"); return; }
+
+    const analysisProv = aiProvider;
+    const analysisKey = aiApiKeys[analysisProv] || "";
+    if (!analysisKey) { setJaspaError("APIキーを設定してください（⚙️ボタン）"); return; }
+    const analysisModel = aiModel || AI_PROVIDERS[analysisProv].models[0];
+
+    // テキストをパース（行ごと、または JSON）
+    let members = tryParseJSON(jaspaManualInput);
+    if (members.length === 0) {
+      // タブ区切り・カンマ区切り・改行区切りのシンプルリストとして処理
+      members = jaspaManualInput.split(/\n/).map(line => {
+        const parts = line.split(/[\t,]/).map(s => s.trim()).filter(Boolean);
+        return { name: parts[0] || "", phone: parts[1] || "", url: parts[2] || "", address: parts[3] || "" };
+      }).filter(m => m.name);
+    }
+
+    if (members.length === 0) { setJaspaError("工場リストを読み取れませんでした。1行1工場で「工場名 電話番号」の形式で入力してください。"); return; }
+
+    setJaspaScanning(true);
+    setJaspaError("");
+    setJaspaResults([]);
+    setJaspaPhase(`🔍 ${members.length}件のURLを死活チェック中（手動入力）...`);
+
+    try {
+      const jaspaInfo = getJaspaUrl(jaspaRegion);
+      const checkPrompt = `以下の自動車整備工場のウェブサイトURLを1件ずつ確認してください。
+
+${members.map((m, i) => `${i+1}. ${m.name} — URL: ${m.url || "なし"} — TEL: ${m.phone || "不明"}`).join("\n")}
+
+各URLについて以下を判定してください：
+- URLが空・なし → まずWeb検索で自社サイトを探し、見つからなければ "nosite"
+- "ssl": HTTPSだがSSL証明書エラー
+- "dns": ドメイン自体が存在しない
+- "notfound": ページが存在しない（404等）
+- "nosite": URLなし・サイト存在しない
+- "ok": 正常にアクセス可能
+
+JSONのみ返してください:
+[{"name":"工場名","url":"URL","phone":"電話","errorType":"ssl/dns/notfound/nosite/ok","detail":"エラー詳細","address":"住所"}]`;
+
+      const checkText = await callAI(analysisProv, analysisKey,
+        [{ role: "user", content: checkPrompt }],
+        { model: analysisModel, maxTokens: 8000 }
+      );
+
+      let checked = tryParseJSON(checkText);
+      if (checked.length === 0) {
+        const retry = await callAI(analysisProv, analysisKey,
+          [{ role: "user", content: `以下をJSON配列にしてください:\n${checkText.substring(0,5000)}` },
+           { role: "assistant", content: "[" }],
+          { model: analysisModel, system: "JSON配列のみ返せ。", maxTokens: 4000 }
+        );
+        checked = tryParseJSON("[" + retry);
+      }
+
+      if (checked.length > 0) {
+        const results = checked.map(r => ({
+          ...r,
+          id: uid(),
+          errorType: ["ssl","dns","notfound","nosite","ok"].includes(r.errorType) ? r.errorType : "nosite",
+          jaspaSource: jaspaInfo ? jaspaInfo.url : "",
           ken: jaspaRegion,
         }));
         setJaspaResults(results);
@@ -1561,11 +1665,50 @@ JSON配列のみ返すこと（説明文不要）:
                 )}
               </div>
 
-              <button onClick={runJaspaScan} disabled={jaspaScanning}
-                style={{ ...btnPrimary, background: "#10b981", marginTop: 12, width: "100%", opacity: jaspaScanning ? 0.6 : 1 }}>
-                {jaspaScanning ? jaspaPhase : "🔍 振興会スキャン実行"}
-              </button>
-              {jaspaError && <div style={{ color: accent, fontSize: 12, marginTop: 8 }}>{jaspaError}</div>}
+              <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                <button onClick={runJaspaScan} disabled={jaspaScanning}
+                  style={{ ...btnPrimary, background: "#10b981", flex: 1, opacity: jaspaScanning ? 0.6 : 1 }}>
+                  {jaspaScanning && !jaspaManualMode ? jaspaPhase : "🔍 振興会スキャン実行（AI自動取得）"}
+                </button>
+                <button
+                  onClick={() => { setJaspaManualMode(m => !m); setJaspaError(""); }}
+                  style={{ background: jaspaManualMode ? "#1e3a5f" : "transparent", color: "#6699cc", border: "1px solid #6699cc44", borderRadius: 6, padding: "10px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+                  📝 手動入力
+                </button>
+              </div>
+
+              {/* 手動入力モード */}
+              {jaspaManualMode && (
+                <div style={{ marginTop: 12, background: "#0a1628", border: "1px solid #6699cc44", borderRadius: 8, padding: 14 }}>
+                  <div style={{ fontSize: 12, color: "#6699cc", fontWeight: 700, marginBottom: 6 }}>📝 手動入力モード — 振興会サイトからコピーした工場リストを貼り付け</div>
+                  <div style={{ fontSize: 11, color: text2, marginBottom: 8 }}>
+                    1行1工場で入力（タブ・カンマ区切り対応）: <code style={{ background: "#1a1a2e", padding: "2px 6px", borderRadius: 4, fontSize: 11 }}>工場名[TAB]電話番号[TAB]URL</code>
+                    <br/>URLは省略可。URLなしの場合はAIがWeb検索で探します。
+                  </div>
+                  <textarea
+                    value={jaspaManualInput}
+                    onChange={e => setJaspaManualInput(e.target.value)}
+                    placeholder={"西自動車整備工場\t098-xxx-xxxx\nhttp://nishi-auto.com\n東整備工場\t098-yyy-yyyy"}
+                    style={{ width: "100%", minHeight: 120, background: "#1a1a2e", border: `1px solid ${border}`, borderRadius: 6, padding: 10, color: text1, fontSize: 12, fontFamily: "monospace", resize: "vertical" }}
+                  />
+                  <button onClick={runJaspaManual} disabled={jaspaScanning}
+                    style={{ ...btnPrimary, background: "#6699cc", marginTop: 8, width: "100%", opacity: jaspaScanning ? 0.6 : 1, fontSize: 13 }}>
+                    {jaspaScanning && jaspaManualMode ? jaspaPhase : "🔍 手動リストでURL死活チェック実行"}
+                  </button>
+                </div>
+              )}
+
+              {jaspaError && (
+                <div style={{ color: "#f59e0b", fontSize: 12, marginTop: 8, background: "#f59e0b11", borderRadius: 6, padding: "8px 12px", whiteSpace: "pre-line" }}>
+                  ⚠️ {jaspaError}
+                  {jaspaError.includes("手動入力") && (
+                    <button onClick={() => { setJaspaManualMode(true); setJaspaError(""); }}
+                      style={{ marginLeft: 12, background: "#6699cc22", border: "1px solid #6699cc", color: "#6699cc", borderRadius: 4, padding: "3px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                      📝 手動入力を開く
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
 
             {jaspaScanning && (
