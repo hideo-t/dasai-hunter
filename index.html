@@ -82,7 +82,7 @@ const JASPA_LIST = [
   { ken: "大分", url: "http://www.jaspa-oita.or.jp/", searchUrl: "http://www.jaspa-oita.or.jp/" },
   { ken: "宮崎", url: "http://jaspa-miyazaki.or.jp/", searchUrl: "http://jaspa-miyazaki.or.jp/" },
   { ken: "鹿児島", url: "http://www.kjss.or.jp/", searchUrl: "http://www.kjss.or.jp/" },
-  { ken: "沖縄", url: "http://www.jaspa-okinawa.or.jp/", searchUrl: "https://www.jaspa-okinawa.or.jp/m/okinawa.html" },
+  { ken: "沖縄", url: "http://www.jaspa-okinawa.or.jp/", searchUrl: "http://www.jaspa-okinawa.or.jp/" },
 ];
 
 // 後方互換用
@@ -636,39 +636,88 @@ approach: "攻め"=集客課題, "守り"=採用課題
         (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
       ];
 
+      // HTMLデコードユーティリティ
+      const decodeHtml = (buf) => {
+        let html = "";
+        try { html = new TextDecoder("utf-8", { fatal: true }).decode(buf); } catch {}
+        if (!html || html.length < 100) {
+          try { html = new TextDecoder("shift-jis").decode(buf); } catch {}
+        } else if (html.toLowerCase().includes("shift_jis") || html.toLowerCase().includes("shift-jis")) {
+          try { html = new TextDecoder("shift-jis").decode(buf); } catch {}
+        }
+        return html;
+      };
+
+      const cleanScript = (html) => html
+        .replace(/<script[\s\S]*?<\/script>/gi, "")
+        .replace(/<style[\s\S]*?<\/style>/gi, "")
+        .replace(/<!--[\s\S]*?-->/g, "");
+
+      // 1ページ分のHTMLからsubページリンクを抽出
+      const extractSubLinks = (html, baseUrl) => {
+        const base = new URL(baseUrl);
+        const found = new Set();
+        const re = /href=["']([^"'#?]+\.html?)["']/gi;
+        let m;
+        while ((m = re.exec(html)) !== null) {
+          try {
+            const abs = new URL(m[1], base).href;
+            if (abs.startsWith(base.origin) && abs !== baseUrl) found.add(abs);
+          } catch {}
+        }
+        return [...found];
+      };
+
+      const proxyFetch = async (url, proxy) => {
+        const resp = await fetch(proxy(url), { signal: AbortSignal.timeout(8000) });
+        if (!resp.ok) return null;
+        const buf = await resp.arrayBuffer();
+        const html = decodeHtml(buf);
+        return html.length > 100 ? html : null;
+      };
+
       for (const proxy of CORS_PROXIES) {
         if (members.length > 0) break;
         try {
-          const resp = await fetch(proxy(targetUrl), { signal: AbortSignal.timeout(8000) });
-          if (!resp.ok) continue;
-          // 文字コード判定（Shift-JIS対応）
-          const buf = await resp.arrayBuffer();
-          let html = "";
-          try { html = new TextDecoder("utf-8").decode(buf); } catch {}
-          if (html.includes("???") || html.length < 200) {
-            try { html = new TextDecoder("shift-jis").decode(buf); } catch {}
+          // ── メインページ取得 ──
+          const mainHtml = await proxyFetch(targetUrl, proxy);
+          if (!mainHtml) continue;
+
+          setJaspaPhase("🗺️ サブページを検出中...");
+
+          // ── サブページ（市町村別・ページ別リスト）検出＆取得 ──
+          const subLinks = extractSubLinks(mainHtml, targetUrl);
+          // キーワードフィルタ：会員リスト系ページを優先
+          const listKeywords = /m[/\\]|member|kaiin|list|meibo|soshiki|factory|koujou|ichiran|工場|会員|名簿|一覧/i;
+          const priorityLinks = subLinks.filter(u => listKeywords.test(u)).slice(0, 20);
+          const otherLinks = subLinks.filter(u => !listKeywords.test(u)).slice(0, 5);
+          const allLinks = [...new Set([...priorityLinks, ...otherLinks])];
+
+          setJaspaPhase(`📄 メインページ＋${allLinks.length}個のサブページを取得中...`);
+
+          const allHtmlParts = [cleanScript(mainHtml).substring(0, 15000)];
+          let fetchedCount = 0;
+          for (const link of allLinks) {
+            try {
+              const subHtml = await proxyFetch(link, proxy);
+              if (subHtml) {
+                allHtmlParts.push(cleanScript(subHtml).substring(0, 8000));
+                fetchedCount++;
+              }
+            } catch {}
+            if (allHtmlParts.join("").length > 60000) break; // トークン上限
           }
-          // Shift-JIS判定：metaタグで確認
-          if (html.toLowerCase().includes("shift_jis") || html.toLowerCase().includes("shift-jis")) {
-            try { html = new TextDecoder("shift-jis").decode(buf); } catch {}
-          }
-          if (html.length < 200) continue;
 
-          setJaspaPhase("📋 取得したHTML（" + Math.round(html.length/1000) + "KB）から会員リストを抽出中...");
+          const combinedHtml = allHtmlParts.join("\n\n--- 次のページ ---\n\n");
+          setJaspaPhase(`📋 ${fetchedCount + 1}ページ分（${Math.round(combinedHtml.length/1000)}KB）から会員リストを抽出中...`);
 
-          // 不要タグ除去（script/style）してトークン節約
-          const cleanHtml = html
-            .replace(/<script[\s\S]*?<\/script>/gi, "")
-            .replace(/<style[\s\S]*?<\/style>/gi, "")
-            .replace(/<!--[\s\S]*?-->/g, "")
-            .substring(0, 30000);
-
-          const parsePrompt = `以下は${jaspaRegion}自動車整備振興会サイトのHTMLです。
-会員工場の「工場名・電話番号・サイトURL・住所」を全件抽出してください。
+          const parsePrompt = `以下は${jaspaRegion}自動車整備振興会サイトの複数ページのHTMLです。
+全ページを通じて会員工場の「工場名・電話番号・サイトURL・住所」を重複なく全件抽出してください。
 電話番号がなければ空文字。URLがなければ空文字。住所がなければ空文字。
+ナビゲーションリンク・メニュー項目は除外。実際の工場名・整備業者名のみ含めること。
 
-HTML:
-${cleanHtml}
+HTML（複数ページ結合）:
+${combinedHtml}
 
 JSONのみ返してください（説明文不要）:
 [{"name":"工場名","phone":"電話番号","url":"https://...","address":"住所"}]`;
@@ -679,11 +728,10 @@ JSONのみ返してください（説明文不要）:
           );
           members = tryParseJSON(parseText);
           if (members.length > 0) {
-            setJaspaPhase(`✅ HTML直接取得成功。${members.length}件の会員を発見`);
-            await new Promise(r => setTimeout(r, 800));
+            setJaspaPhase(`✅ HTML直接取得成功！${fetchedCount + 1}ページから ${members.length}件の会員を発見`);
+            await new Promise(r => setTimeout(r, 1000));
           }
         } catch(proxyErr) {
-          // プロキシ失敗 → 次のプロキシへ
           console.warn("proxy failed:", proxyErr.message);
         }
       }
@@ -741,62 +789,62 @@ JSONのみ返してください（説明文不要）:
         setJaspaScanning(false); return;
       }
 
-      setJaspaPhase(`🔍 ${members.length}件をチェック中（接続確認＋内容確認＋GoogleMap検索）...`);
+      setJaspaPhase(`🔍 ${members.length}件のURLを接続確認中...`);
 
-      // ── STEP 2: URL死活チェック＋内容確認＋未URL工場の発見 ──
-      const checkPrompt = `あなたは自動車整備工場のウェブサイト調査員です。以下の工場を1件ずつ調査してください。
+      // ── STEP 2: URL接続確認のみ（高速・全件処理）──
+      // URLありの工場 → 接続確認・内容確認
+      // URLなしの工場 → nosite で一旦登録（Step 3で発見）
+      const CHUNK_SIZE = 30; // 30件ずつ処理
+      let allChecked = [];
 
-【調査対象】
-${members.map((m, i) => `${i+1}. ${m.name} — URL: ${m.url || "なし"} — TEL: ${m.phone || "不明"} — 住所: ${m.address || "不明"}`).join("\n")}
+      for (let i = 0; i < members.length; i += CHUNK_SIZE) {
+        const chunk = members.slice(i, i + CHUNK_SIZE);
+        const chunkNum = Math.floor(i / CHUNK_SIZE) + 1;
+        const totalChunks = Math.ceil(members.length / CHUNK_SIZE);
+        setJaspaPhase(`🔍 URLチェック中... ${i+1}〜${Math.min(i+CHUNK_SIZE, members.length)}件目 (${chunkNum}/${totalChunks})`);
 
-【調査フロー（各工場について必ず実行）】
+        const checkPrompt = `以下の自動車整備工場のサイトを確認してください。
 
-■ URLが記載されている場合：
-1. そのURLに実際にアクセスする
-2. 接続できない場合 → エラー種別を判定：
-   - "ssl"  : SSL証明書エラー（ERR_CERT_DATE_INVALID等）
-   - "dns"  : ドメイン消滅（DNS_PROBE_FINISHED_NXDOMAIN等）
-   - "notfound": 404/ページなし
-3. 接続できた場合 → ページの内容を確認：
-   - "content_bad" : ページは開くが内容がおかしい（削除されました・移転しました・404エラーページ・工事中・別事業に転用等）
-   - "ok"          : 正常な自動車整備工場のサイトが表示されている
+${chunk.map((m, idx) => `${idx+1}. ${m.name} — URL: ${m.url || "なし"} — TEL: ${m.phone || "不明"}`).join("\n")}
 
-■ URLが記載されていない場合：
-1. 「工場名 + 電話番号」でWeb検索 ＋ Googleマップで検索
-2. 自社サイトが見つかった場合 → そのURLでアクセスし、内容を確認（content_bad or ok）
-3. Googleマップにビジネス情報はあるがサイトなし → "nosite"
-4. Googleマップにも何も存在しない → "nosite_none"（完全デジタル不在）
+【判定ルール】
+- URLあり → 実際にアクセスして判定：
+  - "ssl"         : SSL証明書エラー
+  - "dns"         : ドメイン不存在
+  - "notfound"    : 404/ページなし
+  - "content_bad" : 開くが内容が異常（削除・移転・工事中等）
+  - "ok"          : 正常なサイト
+- URLなし → "nosite" で確定（詳細調査は別途実施）
 
-【判定コード一覧】
-- "ssl"        : SSL失効
-- "dns"        : ドメイン消滅
-- "notfound"   : 404等のページなし
-- "content_bad": 接続できるが内容が異常（削除・移転・404内包ページ等）
-- "nosite"     : URLなし・Googleマップのみ・サイト未発見
-- "nosite_none": URLなし・Googleマップにも存在しない（完全デジタル不在）
-- "ok"         : 正常な事業サイトを確認
+JSONのみ（説明不要）:
+[{"name":"工場名","url":"URL","phone":"電話","errorType":"コード","detail":"1行メモ","address":"住所"}]`;
 
-また、認証種別（指定工場/認証工場/不明）も調査してください。
-
-JSONのみ返してください:
-[{"name":"工場名","url":"実際に確認したURL（空でも可）","phone":"電話","errorType":"判定コード","detail":"詳細1行","address":"住所","certType":"指定工場/認証工場/不明"}]`;
-
-      const checkText = await callAI(analysisProv, analysisKey,
-        [{ role: "user", content: checkPrompt }],
-        { model: analysisModel, maxTokens: 8000 }
-      );
-
-      let checked = tryParseJSON(checkText);
-      if (checked.length === 0) {
-        // リトライ
-        setJaspaPhase("📊 結果を構造化中...");
-        const retry = await callAI(analysisProv, analysisKey,
-          [{ role: "user", content: `以下をJSON配列にしてください:\n${checkText.substring(0,5000)}` },
-           { role: "assistant", content: "[" }],
-          { model: analysisModel, system: "JSON配列のみ返せ。", maxTokens: 4000 }
+        const checkText = await callAI(analysisProv, analysisKey,
+          [{ role: "user", content: checkPrompt }],
+          { model: analysisModel, maxTokens: 4000 }
         );
-        checked = tryParseJSON("[" + retry);
+        let checked = tryParseJSON(checkText);
+        if (checked.length === 0 && chunk.length > 0) {
+          // リトライ
+          const retry = await callAI(analysisProv, analysisKey,
+            [{ role: "user", content: `以下をJSON配列に変換:
+${checkText.substring(0,3000)}` },
+             { role: "assistant", content: "[" }],
+            { model: analysisModel, system: "JSON配列のみ返せ。", maxTokens: 2000 }
+          );
+          checked = tryParseJSON("[" + retry);
+        }
+        allChecked = [...allChecked, ...checked];
       }
+
+      // URLなし工場でSTEP 2に含まれなかったものを nosite で補完
+      members.forEach(m => {
+        if (!allChecked.find(c => c.name && m.name && (c.name.includes(m.name.slice(0,4)) || m.name.includes(c.name.slice(0,4))))) {
+          allChecked.push({ name: m.name, url: m.url || "", phone: m.phone || "", address: m.address || "", errorType: "nosite", detail: "チェック未実施" });
+        }
+      });
+
+      const checked = allChecked;
 
       if (checked.length > 0) {
         const results = checked.map(r => ({
