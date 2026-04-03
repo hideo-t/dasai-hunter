@@ -619,6 +619,73 @@ approach: "攻め"=集客課題, "守り"=採用課題
     ok:           { label: "正常（大目的評価要）", icon: "✅", color: "#10b981", kill: "" },
   };
 
+  // ── DOMParser による振興会HTML直接解析（AI不要・全件取得・青/黒リンク正確判定）──
+  const parseJaspaHtml = (html, baseUrl) => {
+    const members = [];
+    try {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, 'text/html');
+      const seen = new Set();
+
+      doc.querySelectorAll('table').forEach(table => {
+        const rows = Array.from(table.querySelectorAll('tr'));
+        if (rows.length < 2) return;
+
+        // ヘッダー行でカラム特定
+        const hdrs = Array.from(rows[0].querySelectorAll('th,td'))
+          .map(c => c.textContent.replace(/\s/g,''));
+        const nameIdx = hdrs.findIndex(h => h.match(/事業所|名称/));
+        if (nameIdx < 0) return; // 振興会テーブルでない
+
+        const telIdx  = hdrs.findIndex(h => h.match(/TEL|ＴＥＬ|電話/));
+        const addrIdx = hdrs.findIndex(h => h.match(/住所|住　所/));
+        const certIdx = hdrs.findIndex(h => h.match(/^認証$|^認　証$/));
+        const minkIdx = hdrs.findIndex(h => h.match(/民間|車検場/));
+
+        rows.slice(1).forEach(row => {
+          const cells = Array.from(row.querySelectorAll('td'));
+          if (cells.length <= nameIdx) return;
+
+          const nameCell = cells[nameIdx];
+          const nameTxt  = nameCell.textContent.trim();
+          if (!nameTxt || nameTxt === '−' || nameTxt === '-' || nameTxt.length < 2) return;
+          if (seen.has(nameTxt)) return;
+          seen.add(nameTxt);
+
+          // ── 最重要判定：青（URL有）か黒（URL無）か ──
+          // 住所セルのGoogleマップリンクは除外し、工場の自社サイトリンクのみ取得
+          const shopLink = Array.from(nameCell.querySelectorAll('a')).find(a => {
+            const h = (a.getAttribute('href') || '').toLowerCase();
+            return h && !h.includes('google') && !h.includes('maps.') &&
+                   !h.includes('goo.gl') && !h.startsWith('#') && !h.startsWith('mailto');
+          });
+
+          let url = '';
+          if (shopLink) {
+            url = shopLink.getAttribute('href') || '';
+            if (url.startsWith('/')) url = (baseUrl || '') + url;
+          }
+
+          const phone   = telIdx  >= 0 && cells[telIdx]  ? cells[telIdx].textContent.trim() : '';
+          const address = addrIdx >= 0 && cells[addrIdx] ? cells[addrIdx].textContent.trim() : '';
+          const certNo  = certIdx >= 0 && cells[certIdx] ? cells[certIdx].textContent.trim() : '';
+          const isMink  = minkIdx >= 0 && cells[minkIdx] ? cells[minkIdx].textContent.includes('民間') : false;
+
+          members.push({
+            name:     nameTxt,
+            url:      url,
+            phone:    phone.replace(/[ー―]/g,'-').replace(/[（）\s　]/g,''),
+            address:  address.replace(/\s+/g,''),
+            certNo,
+            certType: isMink ? '指定工場（民間車検場）' : '認証工場',
+            hasLink:  !!shopLink, // true=青（URL有）/ false=黒（URL無）
+          });
+        });
+      });
+    } catch(e) { console.warn('DOMParser error:', e); }
+    return members;
+  };
+
   const runJaspaScan = async () => {
     const sm = SEARCH_MODELS[searchModel];
     const searchKey = aiApiKeys[sm.needsKey] || "";
@@ -694,53 +761,41 @@ approach: "攻め"=集客課題, "守り"=採用課題
           const mainHtml = await proxyFetch(targetUrl, proxy);
           if (!mainHtml) continue;
 
-          setJaspaPhase("🗺️ サブページを検出中...");
+          const baseUrl = (() => { try { return new URL(targetUrl).origin; } catch { return ''; } })();
 
-          // ── サブページ（市町村別・ページ別リスト）検出＆取得 ──
+          // ── DOMParser で全件直接解析（AIを使わず・切り捨てなし）──
+          members = parseJaspaHtml(mainHtml, baseUrl);
+
+          setJaspaPhase(`🗺️ サブページを検出中（既に${members.length}件取得）...`);
+
+          // ── サブページも全件解析 ──
           const subLinks = extractSubLinks(mainHtml, targetUrl);
-          // キーワードフィルタ：会員リスト系ページを優先
           const listKeywords = /m[/\\]|member|kaiin|list|meibo|soshiki|factory|koujou|ichiran|工場|会員|名簿|一覧/i;
-          const priorityLinks = subLinks.filter(u => listKeywords.test(u)).slice(0, 20);
-          const otherLinks = subLinks.filter(u => !listKeywords.test(u)).slice(0, 5);
+          const priorityLinks = subLinks.filter(u => listKeywords.test(u)).slice(0, 30);
+          const otherLinks    = subLinks.filter(u => !listKeywords.test(u)).slice(0, 5);
           const allLinks = [...new Set([...priorityLinks, ...otherLinks])];
 
-          setJaspaPhase(`📄 メインページ＋${allLinks.length}個のサブページを取得中...`);
+          setJaspaPhase(`📄 サブページ${allLinks.length}件を追加取得中...`);
 
-          const allHtmlParts = [cleanScript(mainHtml).substring(0, 15000)];
-          let fetchedCount = 0;
           for (const link of allLinks) {
             try {
               const subHtml = await proxyFetch(link, proxy);
               if (subHtml) {
-                allHtmlParts.push(cleanScript(subHtml).substring(0, 8000));
-                fetchedCount++;
+                const sub = parseJaspaHtml(subHtml, baseUrl);
+                sub.forEach(m => {
+                  if (!members.find(ex => ex.name === m.name || (ex.phone && ex.phone === m.phone && ex.phone.length > 6))) {
+                    members.push(m);
+                  }
+                });
               }
             } catch {}
-            if (allHtmlParts.join("").length > 60000) break; // トークン上限
           }
 
-          const combinedHtml = allHtmlParts.join("\n\n--- 次のページ ---\n\n");
-          setJaspaPhase(`📋 ${fetchedCount + 1}ページ分（${Math.round(combinedHtml.length/1000)}KB）から会員リストを抽出中...`);
-
-          const parsePrompt = `以下は${jaspaRegion}自動車整備振興会サイトの複数ページのHTMLです。
-全ページを通じて会員工場の「工場名・電話番号・サイトURL・住所」を重複なく全件抽出してください。
-電話番号がなければ空文字。URLがなければ空文字。住所がなければ空文字。
-ナビゲーションリンク・メニュー項目は除外。実際の工場名・整備業者名のみ含めること。
-
-HTML（複数ページ結合）:
-${combinedHtml}
-
-JSONのみ返してください（説明文不要）:
-[{"name":"工場名","phone":"電話番号","url":"https://...","address":"住所"}]`;
-
-          const parseText = await callAI(analysisProv, analysisKey,
-            [{ role: "user", content: parsePrompt }],
-            { model: analysisModel, maxTokens: 8000 }
-          );
-          members = tryParseJSON(parseText);
           if (members.length > 0) {
-            setJaspaPhase(`✅ HTML直接取得成功！${fetchedCount + 1}ページから ${members.length}件の会員を発見`);
-            await new Promise(r => setTimeout(r, 1000));
+            const withUrl    = members.filter(m => m.hasLink).length;
+            const withoutUrl = members.filter(m => !m.hasLink).length;
+            setJaspaPhase(`✅ DOMParser解析成功！計 ${members.length}件（🔗URL有: ${withUrl}件 / 黒テキスト: ${withoutUrl}件）`);
+            await new Promise(r => setTimeout(r, 1500));
           }
         } catch(proxyErr) {
           console.warn("proxy failed:", proxyErr.message);
@@ -800,71 +855,118 @@ JSONのみ返してください（説明文不要）:
         setJaspaScanning(false); return;
       }
 
-      setJaspaPhase(`🔍 ${members.length}件のURLを接続確認中...`);
+      // ── STEP 2: URL有（青リンク）と URL無（黒テキスト）を完全分離処理 ──
+      const withUrl    = members.filter(m => m.url && m.url.trim());
+      const withoutUrl = members.filter(m => !m.url || !m.url.trim());
 
-      // ── STEP 2: URL接続確認のみ（高速・全件処理）──
-      // URLありの工場 → 接続確認・内容確認
-      // URLなしの工場 → nosite で一旦登録（Step 3で発見）
-      const CHUNK_SIZE = 30; // 30件ずつ処理
+      setJaspaPhase(`🔗 URL有り ${withUrl.length}件 / 🔍 URL無し ${withoutUrl.length}件 — 処理開始...`);
       let allChecked = [];
 
-      for (let i = 0; i < members.length; i += CHUNK_SIZE) {
-        const chunk = members.slice(i, i + CHUNK_SIZE);
-        const chunkNum = Math.floor(i / CHUNK_SIZE) + 1;
-        const totalChunks = Math.ceil(members.length / CHUNK_SIZE);
-        setJaspaPhase(`🔍 URLチェック中... ${i+1}〜${Math.min(i+CHUNK_SIZE, members.length)}件目 (${chunkNum}/${totalChunks})`);
+      // ── STEP 2A: URL有（青リンク）→ CORSプロキシで疎通確認 → DeepSeekで内容評価 ──
+      const CHUNK_A = 15;
+      for (let i = 0; i < withUrl.length; i += CHUNK_A) {
+        const chunk = withUrl.slice(i, i + CHUNK_A);
+        const chunkNum = Math.floor(i / CHUNK_A) + 1;
+        const totalChunks = Math.ceil(withUrl.length / CHUNK_A);
+        setJaspaPhase(`🔗 URL有り接続確認中... ${i+1}〜${Math.min(i+CHUNK_A, withUrl.length)}件目 (${chunkNum}/${totalChunks})`);
 
-        const checkPrompt = `以下の自動車整備工場を「仕様書フロー」に従い1件ずつ調査してください。
-
-対象工場リスト:
-${chunk.map((m, idx) => `${idx+1}. ${m.name} | URL: ${m.url || "なし"} | TEL: ${m.phone || "不明"}`).join("\n")}
-
-【判定フロー — 必ず順番通りに実行】
-
-▶ URLの記載がある場合:
-① 実際にURLへアクセスして疎通確認
-   - 接続不能 → errorType = "ssl" / "dns" / "notfound" で分類
-   - 接続可能 → ②へ
-② 公開情報の有益性を確認
-   - 有益（正常な会社情報・サービス紹介がある）→ errorType = "ok"
-   - 有益でない（移転しました・更新中・工事中・全く関係ないページ）→ errorType = "content_bad"
-
-▶ URL記載なしの場合:
-③ Google Mapsで正式社名（有限会社・株式会社等の法人格含む）＋電話番号で検索
-   - 自社サイト発見 → ②の有益性確認へ（urlに発見したURLを記入、siteSource="googlemap"）
-   - 未発見 → ④へ
-④ ポータルサイト・間借りサイトも含めて検索（食べログ・Googleビジネス・mapion・itp.ne.jp等）
-   - 間借りサイト発見 → errorType = "kakari"、urlにポータルURLを記入、siteSource="portal"
-   - 本当になにもない → errorType = "nosite_none"、siteSource="none"
-
-【大目的評価 — errorType が "ok" の場合のみ入力、他は省略可】
-以下6項目を 0〜100 でスコアリング（高いほど問題あり = 営業チャンス大）:
-- dasai: デザインが古い・ダサい
-- nosns: SNS（Instagram/LINE/X等）連携が弱い・なし
-- noai: チャットbot・AI予約・先進機能なし
-- nolink: 振興会等公的サイトとの連携なし
-- nosite: サイト情報が薄い・少ない
-- broken: リンク切れ・表示不安定
-
-JSONのみ返してください（説明文・コメント不要）:
-[{"name":"工場名","url":"確定URL","phone":"電話","address":"住所","errorType":"ssl|dns|notfound|content_bad|kakari|nosite_none|ok","detail":"1行メモ","siteSource":"official|googlemap|portal|none","daimokuteki":{"dasai":50,"nosns":80,"noai":90,"nolink":60,"nosite":30,"broken":10}}]`;
-
-        const checkText = await callAI(analysisProv, analysisKey,
-          [{ role: "user", content: checkPrompt }],
-          { model: analysisModel, maxTokens: 4000 }
+        // CORSプロキシで実際にアクセス確認
+        const accessResults = await Promise.allSettled(
+          chunk.map(async (m) => {
+            for (const proxy of CORS_PROXIES) {
+              try {
+                const resp = await fetch(proxy(m.url), { signal: AbortSignal.timeout(6000) });
+                const text = await resp.text();
+                return { m, status: resp.ok ? 'ok' : 'notfound', html: text.substring(0, 3000) };
+              } catch {}
+            }
+            return { m, status: 'dns', html: '' };
+          })
         );
-        let checked = tryParseJSON(checkText);
-        if (checked.length === 0 && chunk.length > 0) {
-          // リトライ
-          const retry = await callAI(analysisProv, analysisKey,
-            [{ role: "user", content: `以下をJSON配列に変換:
-${checkText.substring(0,3000)}` },
-             { role: "assistant", content: "[" }],
-            { model: analysisModel, system: "JSON配列のみ返せ。", maxTokens: 2000 }
+
+        // 接続成功したものはDeepSeekで内容評価（安い）
+        const okItems = accessResults
+          .filter(r => r.status === 'fulfilled' && r.value.status === 'ok')
+          .map(r => r.value);
+        const errItems = accessResults
+          .filter(r => r.status === 'fulfilled' && r.value.status !== 'ok')
+          .map(r => r.value);
+
+        // エラー系は即座に分類
+        errItems.forEach(({ m, status }) => {
+          allChecked.push({ ...m, errorType: status, siteSource: 'official', detail: '接続不能' });
+        });
+
+        // 接続成功したものはDeepSeekで内容評価
+        if (okItems.length > 0) {
+          const contentPrompt = `以下の自動車整備工場サイトの内容を評価してください。
+
+${okItems.map((item, idx) => `${idx+1}. ${item.m.name} | URL: ${item.m.url}\nHTML抜粋: ${item.html.substring(0,500)}`).join('\n\n')}
+
+各サイトについて判定:
+- 有益（正常な会社情報・サービス紹介）→ errorType = "ok"
+- 有益でない（移転・工事中・全く別のページ等）→ errorType = "content_bad"
+
+大目的評価（okの場合のみ、0-100）:
+- dasai: デザイン古い・ダサい
+- nosns: SNS連携なし
+- noai: 先進機能なし
+- nolink: 公的サイト未連携
+- nosite: 情報薄い
+- broken: リンク切れ
+
+JSONのみ:
+[{"name":"工場名","url":"URL","phone":"電話","address":"住所","errorType":"ok|content_bad","detail":"1行","siteSource":"official","daimokuteki":{"dasai":50,"nosns":80,"noai":90,"nolink":60,"nosite":30,"broken":10}}]`;
+
+          const contentText = await callAI(analysisProv, analysisKey,
+            [{ role: "user", content: contentPrompt }],
+            { model: analysisModel, maxTokens: 3000 }
           );
-          checked = tryParseJSON("[" + retry);
+          const contentChecked = tryParseJSON(contentText);
+          if (contentChecked.length > 0) {
+            allChecked = [...allChecked, ...contentChecked];
+          } else {
+            okItems.forEach(({ m }) => allChecked.push({ ...m, errorType: 'ok', siteSource: 'official', detail: '内容評価スキップ' }));
+          }
         }
-        allChecked = [...allChecked, ...checked];
+      }
+
+      // ── STEP 2B: URL無（黒テキスト）→ sm.provider（Claude/Perplexity）でGoogle Maps検索 ──
+      const CHUNK_B = 5; // 検索モデルは少数ずつ（確実性重視）
+      for (let i = 0; i < withoutUrl.length; i += CHUNK_B) {
+        const chunk = withoutUrl.slice(i, i + CHUNK_B);
+        const chunkNum = Math.floor(i / CHUNK_B) + 1;
+        const totalChunks = Math.ceil(withoutUrl.length / CHUNK_B);
+        setJaspaPhase(`🔍 URL無し Google Maps検索中... ${i+1}〜${Math.min(i+CHUNK_B, withoutUrl.length)}件目 (${chunkNum}/${totalChunks})`);
+
+        const mapsPrompt = `以下の自動車整備工場について、Google Maps・Web検索でサイトを調べてください。
+
+${chunk.map((m, idx) => `${idx+1}. ${m.name}${m.certType ? '（'+m.certType+'）' : ''} | TEL: ${m.phone || '不明'} | 住所: ${m.address || '不明'}`).join('\n')}
+
+【調査手順】各工場について:
+① 正式社名（有限会社・株式会社等の法人格含む）＋電話番号でGoogle Maps検索
+   → 自社サイト発見: errorType="ok"または"content_bad"（内容評価）、siteSource="googlemap"
+   → 未発見 → ②へ
+② ポータル（食べログ・Googleビジネス等）も含めて検索
+   → ポータル発見: errorType="kakari"、siteSource="portal"
+   → 本当に何もない: errorType="nosite_none"、siteSource="none"
+
+大目的評価（okの場合のみ入力）:
+dasai/nosns/noai/nolink/nosite/broken を 0-100 でスコアリング
+
+JSONのみ:
+[{"name":"工場名","url":"発見したURL（なければ空）","phone":"電話","address":"住所","errorType":"ok|content_bad|kakari|nosite_none","detail":"1行メモ","siteSource":"googlemap|portal|none","daimokuteki":{"dasai":50,"nosns":80,"noai":90,"nolink":60,"nosite":30,"broken":10}}]`;
+
+        const mapsText = await callAI(sm.provider, searchKey,
+          [{ role: "user", content: mapsPrompt }],
+          { model: sm.model, useWebSearch: true, maxTokens: 4000 }
+        );
+        const mapsChecked = tryParseJSON(mapsText);
+        if (mapsChecked.length > 0) {
+          allChecked = [...allChecked, ...mapsChecked];
+        } else {
+          chunk.forEach(m => allChecked.push({ ...m, errorType: 'nosite_none', siteSource: 'none', detail: '調査未完了' }));
+        }
       }
 
       // AIが返さなかった工場を nosite_none でフォールバック補完
