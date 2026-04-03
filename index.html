@@ -1383,18 +1383,27 @@ JSON配列のみ返すこと（説明文不要）:
 
     // 列：IT投資意欲（社名から推定）
     const col = (() => {
-      // 1: 大手メーカー系（ディーラー・メーカー直営）
-      if (/トヨタ|ホンダ|日産|スズキ|ダイハツ|三菱|マツダ|スバル|いすゞ|日野|三菱ふそう|沖縄ふそう|VolksWagen|ＶＷ|BMW|ベンツ|レクサス|コベルコ|日立建機|コマツ/.test(n)) return 1;
-      // 2: 全国FC・チェーン系
-      if (/ユーポス|コバック|オートバックス|イエローハット|ガリバー|ネクステージ|ビッグモーター|タイムズカー|ジェームス|ジャパン|りゅうせき|KANEHIDE|かねひで|コスモ|出光|ENEOS|エネオス|ゴープラス|ロータス|ライコランド|カーコンビニ|マングラ|マンガ倉庫/.test(n)) return 2;
-      // 4: 個人名・屋号系（小規模の特徴: 「〇〇モータース」「〇〇自動車」で代表者名が入る、資・合・名）
-      if (/^(有|資|合|名)/.test(n.replace(/[（(].*?[)）]/g, ''))) {
-        // 有限会社でも地元感があれば3に上げる余地があるが基本4
-        if (n.length < 12) return 4;
-      }
-      // 1人っぽい名前（漢字2〜3文字＋モータース・自動車・整備）
-      if (/^[\u4e00-\u9fa5]{2,4}(モータース|自動車|整備|オート|ガレージ|ボディ|鈑金)/.test(n)) return 4;
-      // 3: 地元中堅（デフォルト — 株式会社で地元名）
+      // 1: 大手メーカー系・ディーラー・トラックメーカー
+      if (/トヨタ|TOYOTA|toyota|ホンダ|Honda|HONDA|honda|日産|Nissan|NISSAN|スズキ|Suzuki|SUZUKI|ダイハツ|Daihatsu|DAIHATSU|三菱|MITSUBISHI|Mitsubishi|マツダ|Mazda|MAZDA|スバル|Subaru|SUBARU|レクサス|Lexus|LEXUS/.test(n)) return 1;
+      // トラックメーカー
+      if (/日野|HINO|Hino|いすゞ|イスズ|ISUZU|Isuzu|ふそう|フソウ|FUSO|三菱ふそう|UDトラック|UDトラックス|日デ|ニッサンディーゼル/.test(n)) return 1;
+      // 建機・重機メーカー
+      if (/コベルコ|KOBELCO|日立建機|Hitachi|HITACHI|コマツ|KOMATSU|Komatsu|キャタピラー|CAT|ヤンマー|YANMAR/.test(n)) return 1;
+      // 輸入車ディーラー
+      if (/VolksWagen|Volkswagen|VW|ＶＷ|BMW|ベンツ|Mercedes|MERCEDES|アウディ|Audi|AUDI|プジョー|Peugeot|シトロエン|ルノー|Renault|ジャガー|ランドローバー|ポルシェ|Porsche|フェラーリ/.test(n)) return 1;
+      // 2: 全国FC・チェーン系（カタカナ・英語ブランド）
+      if (/ユーポス|コバック|オートバックス|Auto ?Backs|イエローハット|Yellow ?Hat|ガリバー|Gulliver|GULLIVER|ネクステージ|Neostage|ビッグモーター|Big ?Motor|タイムズカー|Times|ジェームス|James|ライコランド|Raikoland|カーコンビニ|マンガ倉庫|りゅうせき|KANEHIDE|かねひで|コスモ|COSMO|出光|IDEMITSU|Idemitsu|ENEOS|エネオス|ゴープラス|ロータス|LOTAS|コバック/.test(n)) return 2;
+      // 全国チェーン整備（英字系）
+      if (/AUTOBACS|YELLOW\s?HAT|GULLIVER|NEXTAGE|BIGMOTOR|JAMES|LOTAS/.test(n.toUpperCase())) return 2;
+      // 4: 個人・零細の特徴
+      // 有限・資・合・名 かつ短い社名
+      const stripped = n.replace(/^(有限会社|株式会社|合同会社|合資会社|合名会社|資|有|合|名)[（(]?/, '');
+      if (/^[\u4e00-\u9fa5ぁ-んァ-ヶ]{2,5}(モータース?|自動車|整備|オート|ガレージ|ボディ|ボデー|鈑金|板金|電機|電装|商会|工業)/.test(stripped)) return 4;
+      // 3文字以下の苗字っぽい社名
+      if (/^[\u4e00-\u9fa5]{2,3}(モータース?|自動車|整備工場|オートサービス|ガレージ)$/.test(n)) return 4;
+      // 英字のみの短い社名（個人ガレージ系）
+      if (/^[A-Za-z\s\.&']{2,12}(GARAGE|MOTOR|AUTO|SERVICE|WORKS|BODY|CRAFT|SHOP)$/i.test(n)) return 4;
+      // 3: 地元中堅（デフォルト — 株式会社で地元名、カタカナ社名も含む）
       return 3;
     })();
 
