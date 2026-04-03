@@ -34,78 +34,65 @@ const CRITERIA = [
   { key: "integration", label: "SNS/Maps未連携", icon: "🔗", weight: 15 },
 ];
 
-// ── 都道府県別 自動車整備振興会・商工組合 URL ──
-const JASPA_URLS = {
-  "北海道": "http://www.sss.or.jp/",
-  "札幌": "http://www.sss.or.jp/",
-  "函館": "http://www.hakodate-oasis.com/",
-  "青森": "http://www.oasis-aomori.or.jp/",
-  "岩手": "http://www.jaspa-iwate.or.jp/",
-  "宮城": "http://www.oasis-miyagi.or.jp/",
-  "仙台": "http://www.oasis-miyagi.or.jp/",
-  "秋田": "http://jaspa-akita.or.jp/",
-  "山形": "http://www.jaspa-yamagata.or.jp/",
-  "福島": "http://www.jaspa-fukushima.or.jp/",
-  "白河": "http://www.jaspa-fukushima.or.jp/",
-  "郡山": "http://www.jaspa-fukushima.or.jp/",
-  "いわき": "http://www.jaspa-fukushima.or.jp/",
-  "茨城": "http://www.seibi.or.jp/",
-  "栃木": "http://www.tochiseishin.or.jp/",
-  "那須塩原": "http://www.tochiseishin.or.jp/",
-  "群馬": "http://www.g-oasis.jp/",
-  "埼玉": "http://www.s-jss.or.jp/",
-  "千葉": "http://www.caspa.or.jp/",
-  "東京": "http://www.tossnet.or.jp/",
-  "神奈川": "http://www.car-jp.com/",
-  "横浜": "http://www.car-jp.com/",
-  "新潟": "http://www.jaspa-niigata.or.jp/",
-  "富山": "http://www.tomi-car.or.jp/",
-  "石川": "http://www.jssnet.ne.jp/",
-  "福井": "http://kurumanopro.or.jp/",
-  "山梨": "http://ams.or.jp/",
-  "長野": "http://www.jaspa-nagano.or.jp/",
-  "岐阜": "http://www.gasca.or.jp/",
-  "静岡": "http://www.sjss.or.jp/",
-  "愛知": "http://www.aiseishin.or.jp/",
-  "名古屋": "http://www.aiseishin.or.jp/",
-  "三重": "http://www.mieaspa.or.jp/",
-  "滋賀": "http://www.saspa.or.jp/",
-  "京都": "http://www.kasnet.or.jp/",
-  "大阪": "http://www.js-osaka.or.jp/",
-  "兵庫": "http://www.haspa.or.jp/",
-  "神戸": "http://www.haspa.or.jp/",
-  "奈良": "http://jasca-nara.jp/",
-  "和歌山": "http://www.waspa.or.jp/",
-  "鳥取": "http://www.taspa.or.jp/",
-  "島根": "http://www.shimasei.jp/",
-  "岡山": "http://www.okaseishou.com/",
-  "広島": "http://hjss.jp/",
-  "山口": "http://www.oasis-yamaguchi.or.jp/",
-  "徳島": "http://www.oasis-tokushima.or.jp/",
-  "香川": "http://www.k-oasis.or.jp/",
-  "愛媛": "http://www.easpa.jp/",
-  "高知": "http://www.jaspa.or.jp/", // 高知は連合会経由
-  "福岡": "http://www.fas.or.jp/",
-  "佐賀": "http://www.jaspa-saga.or.jp/",
-  "長崎": "http://www.boo.or.jp/",
-  "熊本": "http://www.k-aspa.com/",
-  "大分": "http://www.jaspa-oita.or.jp/",
-  "宮崎": "http://jaspa-miyazaki.or.jp/",
-  "鹿児島": "http://www.kjss.or.jp/",
-  "沖縄": "http://www.jaspa-okinawa.or.jp/m/",
-  "那覇": "http://www.jaspa-okinawa.or.jp/m/",
-  "沖縄市": "http://www.jaspa-okinawa.or.jp/m/",
-  "宜野湾": "http://www.jaspa-okinawa.or.jp/m/",
-  "浦添": "http://www.jaspa-okinawa.or.jp/m/",
-  "北谷": "http://www.jaspa-okinawa.or.jp/m/",
-};
+// ── 都道府県別 自動車整備振興会・商工組合 ──
+const JASPA_LIST = [
+  { ken: "北海道", url: "http://www.sss.or.jp/", searchUrl: "http://www.sss.or.jp/" },
+  { ken: "青森", url: "http://www.oasis-aomori.or.jp/", searchUrl: "http://www.oasis-aomori.or.jp/" },
+  { ken: "岩手", url: "http://www.jaspa-iwate.or.jp/", searchUrl: "http://www.jaspa-iwate.or.jp/" },
+  { ken: "宮城", url: "http://www.oasis-miyagi.or.jp/", searchUrl: "http://www.oasis-miyagi.or.jp/" },
+  { ken: "秋田", url: "http://jaspa-akita.or.jp/", searchUrl: "http://jaspa-akita.or.jp/" },
+  { ken: "山形", url: "http://www.jaspa-yamagata.or.jp/", searchUrl: "http://www.jaspa-yamagata.or.jp/" },
+  { ken: "福島", url: "http://www.jaspa-fukushima.or.jp/", searchUrl: "http://www.jaspa-fukushima.or.jp/" },
+  { ken: "茨城", url: "http://www.seibi.or.jp/", searchUrl: "http://www.seibi.or.jp/" },
+  { ken: "栃木", url: "http://www.tochiseishin.or.jp/", searchUrl: "http://www.tochiseishin.or.jp/" },
+  { ken: "群馬", url: "http://www.g-oasis.jp/", searchUrl: "http://www.g-oasis.jp/" },
+  { ken: "埼玉", url: "http://www.s-jss.or.jp/", searchUrl: "http://www.s-jss.or.jp/" },
+  { ken: "千葉", url: "http://www.caspa.or.jp/", searchUrl: "http://www.caspa.or.jp/" },
+  { ken: "東京", url: "http://www.tossnet.or.jp/", searchUrl: "http://www.tossnet.or.jp/" },
+  { ken: "神奈川", url: "http://www.car-jp.com/", searchUrl: "http://www.car-jp.com/" },
+  { ken: "新潟", url: "http://www.jaspa-niigata.or.jp/", searchUrl: "http://www.jaspa-niigata.or.jp/" },
+  { ken: "富山", url: "http://www.tomi-car.or.jp/", searchUrl: "http://www.tomi-car.or.jp/" },
+  { ken: "石川", url: "http://www.jssnet.ne.jp/", searchUrl: "http://www.jssnet.ne.jp/" },
+  { ken: "福井", url: "http://kurumanopro.or.jp/", searchUrl: "http://kurumanopro.or.jp/" },
+  { ken: "山梨", url: "http://ams.or.jp/", searchUrl: "http://ams.or.jp/" },
+  { ken: "長野", url: "http://www.jaspa-nagano.or.jp/", searchUrl: "http://www.jaspa-nagano.or.jp/" },
+  { ken: "岐阜", url: "http://www.gasca.or.jp/", searchUrl: "http://www.gasca.or.jp/" },
+  { ken: "静岡", url: "http://www.sjss.or.jp/", searchUrl: "http://www.sjss.or.jp/" },
+  { ken: "愛知", url: "http://www.aiseishin.or.jp/", searchUrl: "http://www.aiseishin.or.jp/" },
+  { ken: "三重", url: "http://www.mieaspa.or.jp/", searchUrl: "http://www.mieaspa.or.jp/" },
+  { ken: "滋賀", url: "http://www.saspa.or.jp/", searchUrl: "http://www.saspa.or.jp/" },
+  { ken: "京都", url: "http://www.kasnet.or.jp/", searchUrl: "http://www.kasnet.or.jp/" },
+  { ken: "大阪", url: "http://www.js-osaka.or.jp/", searchUrl: "http://www.js-osaka.or.jp/" },
+  { ken: "兵庫", url: "http://www.haspa.or.jp/", searchUrl: "http://www.haspa.or.jp/" },
+  { ken: "奈良", url: "http://jasca-nara.jp/", searchUrl: "http://jasca-nara.jp/" },
+  { ken: "和歌山", url: "http://www.waspa.or.jp/", searchUrl: "http://www.waspa.or.jp/" },
+  { ken: "鳥取", url: "http://www.taspa.or.jp/", searchUrl: "http://www.taspa.or.jp/" },
+  { ken: "島根", url: "http://www.shimasei.jp/", searchUrl: "http://www.shimasei.jp/" },
+  { ken: "岡山", url: "http://www.okaseishou.com/", searchUrl: "http://www.okaseishou.com/" },
+  { ken: "広島", url: "http://hjss.jp/", searchUrl: "http://hjss.jp/" },
+  { ken: "山口", url: "http://www.oasis-yamaguchi.or.jp/", searchUrl: "http://www.oasis-yamaguchi.or.jp/" },
+  { ken: "徳島", url: "http://www.oasis-tokushima.or.jp/", searchUrl: "http://www.oasis-tokushima.or.jp/" },
+  { ken: "香川", url: "http://www.k-oasis.or.jp/", searchUrl: "http://www.k-oasis.or.jp/" },
+  { ken: "愛媛", url: "http://www.easpa.jp/", searchUrl: "http://www.easpa.jp/" },
+  { ken: "高知", url: "http://www.jaspa.or.jp/", searchUrl: "http://www.jaspa.or.jp/" },
+  { ken: "福岡", url: "http://www.fas.or.jp/", searchUrl: "http://www.fas.or.jp/" },
+  { ken: "佐賀", url: "http://www.jaspa-saga.or.jp/", searchUrl: "http://www.jaspa-saga.or.jp/" },
+  { ken: "長崎", url: "http://www.boo.or.jp/", searchUrl: "http://www.boo.or.jp/" },
+  { ken: "熊本", url: "http://www.k-aspa.com/", searchUrl: "http://www.k-aspa.com/" },
+  { ken: "大分", url: "http://www.jaspa-oita.or.jp/", searchUrl: "http://www.jaspa-oita.or.jp/" },
+  { ken: "宮崎", url: "http://jaspa-miyazaki.or.jp/", searchUrl: "http://jaspa-miyazaki.or.jp/" },
+  { ken: "鹿児島", url: "http://www.kjss.or.jp/", searchUrl: "http://www.kjss.or.jp/" },
+  { ken: "沖縄", url: "http://www.jaspa-okinawa.or.jp/", searchUrl: "https://www.jaspa-okinawa.or.jp/m/okinawa.html" },
+];
+
+// 後方互換用
+const JASPA_URLS = Object.fromEntries(JASPA_LIST.map(j => [j.ken, j.url]));
 
 const getJaspaUrl = (region) => {
   if (!region) return null;
-  // 完全一致→部分一致の順で検索
-  for (const [key, url] of Object.entries(JASPA_URLS)) {
-    if (region.includes(key) || key.includes(region)) return { url, ken: key };
-  }
+  // 都道府県リストから完全一致→部分一致
+  const found = JASPA_LIST.find(j => region.includes(j.ken) || j.ken.includes(region));
+  if (found) return { url: found.url, searchUrl: found.searchUrl, ken: found.ken };
   return null;
 };
 
@@ -625,6 +612,9 @@ approach: "攻め"=集客課題, "守り"=採用課題
     const jaspaInfo = getJaspaUrl(jaspaRegion);
     if (!jaspaInfo) { setJaspaError("対応する振興会URLが見つかりません"); return; }
 
+    const jaspaInfo = getJaspaUrl(jaspaRegion);
+    if (!jaspaInfo) { setJaspaError("対応する振興会URLが見つかりません"); return; }
+
     setJaspaScanning(true);
     setJaspaError("");
     setJaspaResults([]);
@@ -632,10 +622,19 @@ approach: "攻め"=集客課題, "守り"=採用課題
     try {
       // ── STEP 1: 会員リスト取得 ──
       setJaspaPhase("📋 会員リストを取得中...");
-      const listPrompt = `${jaspaInfo.url} にアクセスして、${jaspaRegion}の自動車整備振興会・商工組合の会員工場リストを取得してください。
+      const targetUrl = jaspaInfo.searchUrl || jaspaInfo.url;
+
+      const listPrompt = `以下のURLにアクセスして、${jaspaRegion}の自動車整備振興会・商工組合の会員工場リストを取得してください。
+
+アクセスURL: ${targetUrl}
+
+もしそのURLで工場リストが見つからない場合は、以下も試してください:
+- ${jaspaInfo.url} のトップページ内のリンクをたどる
+- 「${jaspaRegion} 自動車整備振興会 会員工場一覧」でWeb検索する
+
 各工場の「工場名・電話番号・公式サイトURL」を全件抽出してください。
 URLが記載されていない工場もリストに含めてください（urlを空文字で）。
-JSONのみ返してください:
+JSONのみ返してください（説明文不要）:
 [{"name":"工場名","phone":"電話番号","url":"https://...","address":"住所（あれば）"}]`;
 
       const listText = await callAI(sm.provider, searchKey,
@@ -1553,8 +1552,8 @@ JSON配列のみ返すこと（説明文不要）:
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                 <select value={jaspaRegion} onChange={e => setJaspaRegion(e.target.value)}
                   style={{ ...inputStyle, width: "auto", minWidth: 140 }}>
-                  {Object.keys(JASPA_URLS).filter((k,i,a) => a.findIndex(x => JASPA_URLS[x]===JASPA_URLS[k])===i).map(k => (
-                    <option key={k} value={k}>{k}</option>
+                  {JASPA_LIST.map(j => (
+                    <option key={j.ken} value={j.ken}>{j.ken}</option>
                   ))}
                 </select>
                 {getJaspaUrl(jaspaRegion) && (
