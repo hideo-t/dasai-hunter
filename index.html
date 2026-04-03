@@ -28,10 +28,10 @@ const STATUS_COLORS = {
 };
 
 const CRITERIA = [
-  { key: "responsive", label: "スマホ非対応", icon: "📱", weight: 30 },
+  { key: "responsive", label: "スマホ非対応", icon: "📱", weight: 40 },
   { key: "design", label: "デザイン古い", icon: "🎨", weight: 25 },
-  { key: "security", label: "SSL/速度", icon: "🔒", weight: 25 },
-  { key: "integration", label: "SNS/Maps未連携", icon: "🔗", weight: 20 },
+  { key: "security", label: "SSL/速度", icon: "🔒", weight: 20 },
+  { key: "integration", label: "SNS/Maps未連携", icon: "🔗", weight: 15 },
 ];
 
 const REGIONS = [
@@ -314,7 +314,9 @@ function DasaiHunterSFA() {
       const listText = await callAI(analysisProv, analysisKey,
         [{ role: "user", content: `以下から店舗名・URL・電話番号を抽出してJSON配列にしてください。
 URLが不明な場合はurlを空文字にしてください。
-重要: goo-net.com, carsensor.net, kakaku.com, itp.ne.jp, mapion.co.jp, navitime.co.jp, ekiten.jp, car-premium.net, kuruma-ex.jp のURLは自社サイトではないので、urlに入れないでください。これらしかない場合はurlを空文字にしてください。
+重要1: goo-net.com, carsensor.net, kakaku.com, itp.ne.jp, mapion.co.jp, navitime.co.jp, ekiten.jp, car-premium.net, kuruma-ex.jp のURLは自社サイトではないので、urlに入れないでください。これらしかない場合はurlを空文字にしてください。
+重要2: .co.jp / .com / .net / .jp などで終わる自社ドメインがあれば必ずurlに含めてください。
+重要3: URLが見つからない場合でも店舗名・電話番号は必ず含めてください。
 
 ${searchText.substring(0, 5000)}
 
@@ -341,19 +343,56 @@ ${searchText.substring(0, 5000)}
 店舗リスト:
 ${urlListText}
 
+【サイト検索：必ず実行すること】
+各店舗について以下の順番で検索し、自社サイトを探してください。
+1. URLが記載されている場合 → そのURLを確認
+2. URLが空・不明の場合 → 以下を順番に検索して自社サイトを探す
+   a. 「[店名] 公式サイト」
+   b. 「[店名] ホームページ」
+   c. 「[店名] [会社名の読み方] site:.co.jp OR site:.com OR site:.jp」
+   d. 「[店名]」だけで検索してトップに出るドメインを確認
+3. 上記すべて試しても見つからない場合のみ → cms:"サイトなし"
+
 【絶対に守るルール】
-- 上記の各URLを確認してください。Web検索が使える場合は実際に検索してサイト内容を確認してください。
-- URLが空や不明の場合は「[店舗名] 公式サイト」で検索してURLを探してください
+- 「サイトなし」は最終手段。上記4パターンを全て試してから判定すること
+- 推測でサイトなしにしない。必ず検索して確認してから判定すること
+- URLが見つかった場合は必ずurlフィールドに記入すること（空にしない）
 - httpsで始まるURLがある場合、SSLスコアは80以上にしてください
 - wp-contentがURLやHTML内にある場合、CMSはWordPressと判定してください
 - Instagram/LINE/Facebook/Xのリンクがサイト内にある場合、integrationスコアに反映してください
-- 「サイトなし」は本当にサイトが見つからない場合のみ
+
+【📱 モバイル対応の判定基準（最重要）】
+responsiveスコアは以下の基準で厳密に判定してください。
+スマホ非対応は現代において致命的な問題です。厳しく判定すること。
+
+スコア 0〜20（非対応・致命的）:
+- <meta name="viewport"> タグがない
+- テーブルレイアウト（<table>）でページ構成されている
+- 横スクロールが発生する
+- 文字が極端に小さい（スマホで読めない）
+- 固定幅（例: width:800px）でレイアウトされている
+
+スコア 21〜50（部分対応・問題あり）:
+- viewportはあるがレイアウトが崩れる
+- 一部レスポンシブだが主要コンテンツがPC向け固定
+
+スコア 51〜80（対応済み・改善余地あり）:
+- レスポンシブだがデザインが古い
+- モバイルUXは悪くないが最適化されていない
+
+スコア 81〜100（完全対応）:
+- モバイルファースト設計
+- タップしやすいボタン・読みやすいフォントサイズ
+- Google モバイルフレンドリーテスト合格レベル
+
+サイトなしの場合: responsive: 0（スマホサイトも存在しない＝最悪）
 
 【ポータルサイト除外ルール】
 以下のドメインのページは「自社サイト」ではない。
 除外: goo-net.com, carsensor.net, kakaku.com, itp.ne.jp, mapion.co.jp, navitime.co.jp, ekiten.jp, hotpepper.jp, car-premium.net, kuruma-ex.jp
 - 上記のURLをurlフィールドに入れることは禁止
-- 上記しかない場合はcms:"サイトなし"
+- 上記しかない場合は別の検索パターンで自社サイトを探すこと
+- それでも見つからない場合のみcms:"サイトなし"
 
 【除外ルール】
 閉業・廃業した会社、大手ディーラー、全国チェーンはJSON配列に含めない。
@@ -794,6 +833,42 @@ approach: "攻め"=集客課題, "守り"=採用課題
                       </button>
                     </div>
                     <DasaiBar score={r.dasaiScore} />
+                    {/* 📱 スマホ非対応 警告バナー */}
+                    {(r.scores && r.scores.responsive != null ? r.scores.responsive : 50) < 30 && (
+                      <div style={{
+                        marginTop: 10, padding: "10px 14px", borderRadius: 8,
+                        background: "#ef444418", border: "1px solid #ef444466",
+                        display: "flex", alignItems: "center", gap: 10,
+                      }}>
+                        <span style={{ fontSize: 22 }}>📵</span>
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 900, color: "#ef4444" }}>スマホ非対応！</div>
+                          <div style={{ fontSize: 11, color: "#ef4444aa" }}>
+                            Googleの検索順位が下がり、スマホユーザーが離脱。今すぐ対応が必要。
+                          </div>
+                        </div>
+                        <span style={{
+                          marginLeft: "auto", fontSize: 11, fontWeight: 900,
+                          background: "#ef444433", color: "#ef4444",
+                          border: "1px solid #ef444455", borderRadius: 4, padding: "3px 10px",
+                        }}>
+                          致命的
+                        </span>
+                      </div>
+                    )}
+                    {(r.scores && r.scores.responsive != null ? r.scores.responsive : 50) >= 30 &&
+                     (r.scores && r.scores.responsive != null ? r.scores.responsive : 50) < 55 && (
+                      <div style={{
+                        marginTop: 10, padding: "8px 14px", borderRadius: 8,
+                        background: "#f59e0b14", border: "1px solid #f59e0b44",
+                        display: "flex", alignItems: "center", gap: 10,
+                      }}>
+                        <span style={{ fontSize: 18 }}>📱</span>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: "#f59e0b" }}>
+                          スマホ対応が不完全 — 改善余地あり
+                        </div>
+                      </div>
+                    )}
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginTop: 10 }}>
                       {CRITERIA.map(c => {
                         const s = (r.scores && r.scores[c.key] != null) ? r.scores[c.key] : 50;
