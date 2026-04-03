@@ -34,6 +34,17 @@ const CRITERIA = [
   { key: "integration", label: "SNS/Maps未連携", icon: "🔗", weight: 15 },
 ];
 
+// ── 大目的6項目（仕様書 要件定義より）──
+// スコアは 0〜100（高いほど問題あり = 営業チャンス大）
+const DAIMOKUTEKI = [
+  { key: "dasai",  label: "ダサい・古いデザイン", icon: "💀", color: "#f97316", weight: 30 },
+  { key: "nosns",  label: "SNS連携なし・弱い",   icon: "📱", color: "#06b6d4", weight: 25 },
+  { key: "noai",   label: "先進機能なし（AI等）", icon: "🤖", color: "#8b5cf6", weight: 20 },
+  { key: "nolink", label: "公的サイト未連携",     icon: "🔗", color: "#6366f1", weight: 15 },
+  { key: "nosite", label: "情報が薄い",           icon: "⬛", color: "#6b7280", weight: 5  },
+  { key: "broken", label: "リンク切れ不安定",     icon: "🔴", color: "#ef4444", weight: 5  },
+];
+
 // ── 都道府県別 自動車整備振興会・商工組合 ──
 const JASPA_LIST = [
   { ken: "北海道", url: "http://www.sss.or.jp/", searchUrl: "http://www.sss.or.jp/" },
@@ -599,13 +610,13 @@ approach: "攻め"=集客課題, "守り"=採用課題
 
   // ── 振興会スキャン ──
   const ERROR_TYPES = {
-    ssl:          { label: "SSL失効",      icon: "🔴", color: "#ef4444", kill: "今この瞬間も、お客様がセキュリティ警告で離脱し続けています" },
-    dns:          { label: "ドメイン消滅", icon: "💀", color: "#7c3aed", kill: "Googleで検索しても御社サイトに辿り着けない状態です" },
-    notfound:     { label: "404エラー",    icon: "🟠", color: "#f97316", kill: "振興会リンクから飛んだお客様が404エラーを見ています" },
-    content_bad:  { label: "表示異常",     icon: "⚠️", color: "#eab308", kill: "サイトは存在しますが、削除・移転・エラーページが表示されています" },
-    nosite:       { label: "サイトなし",   icon: "⬛", color: "#6b7280", kill: "ネット上に御社の情報が全く存在しません。今がチャンスです" },
-    nosite_none:  { label: "完全デジタル不在", icon: "🚫", color: "#4b5563", kill: "Google・Map・ネット上のどこにも御社が存在しません。今すぐ始めれば地域最速です" },
-    ok:           { label: "正常",         icon: "✅", color: "#10b981", kill: "" },
+    ssl:          { label: "SSL失効",        icon: "🔴", color: "#ef4444", kill: "今この瞬間も、お客様がセキュリティ警告で離脱し続けています" },
+    dns:          { label: "ドメイン消滅",   icon: "💀", color: "#7c3aed", kill: "Googleで検索しても御社サイトに辿り着けない状態です" },
+    notfound:     { label: "404エラー",      icon: "🟠", color: "#f97316", kill: "振興会リンクから飛んだお客様が404エラーを見ています" },
+    content_bad:  { label: "表示異常",       icon: "⚠️", color: "#eab308", kill: "サイトは存在しますが、移転・工事中・エラーページが表示されています" },
+    kakari:       { label: "間借りサイト",   icon: "🏚️", color: "#a78bfa", kill: "現在ポータルや他社プラットフォームに「間借り」状態です。自社サイトを持てば集客を完全コントロールできます" },
+    nosite_none:  { label: "完全デジタル不在", icon: "🚫", color: "#4b5563", kill: "Google・Map・ポータル含めてネット上のどこにも御社が存在しません。今すぐ始めれば地域最速です" },
+    ok:           { label: "正常（大目的評価要）", icon: "✅", color: "#10b981", kill: "" },
   };
 
   const runJaspaScan = async () => {
@@ -803,21 +814,40 @@ JSONのみ返してください（説明文不要）:
         const totalChunks = Math.ceil(members.length / CHUNK_SIZE);
         setJaspaPhase(`🔍 URLチェック中... ${i+1}〜${Math.min(i+CHUNK_SIZE, members.length)}件目 (${chunkNum}/${totalChunks})`);
 
-        const checkPrompt = `以下の自動車整備工場のサイトを確認してください。
+        const checkPrompt = `以下の自動車整備工場を「仕様書フロー」に従い1件ずつ調査してください。
 
-${chunk.map((m, idx) => `${idx+1}. ${m.name} — URL: ${m.url || "なし"} — TEL: ${m.phone || "不明"}`).join("\n")}
+対象工場リスト:
+${chunk.map((m, idx) => `${idx+1}. ${m.name} | URL: ${m.url || "なし"} | TEL: ${m.phone || "不明"}`).join("\n")}
 
-【判定ルール】
-- URLあり → 実際にアクセスして判定：
-  - "ssl"         : SSL証明書エラー
-  - "dns"         : ドメイン不存在
-  - "notfound"    : 404/ページなし
-  - "content_bad" : 開くが内容が異常（削除・移転・工事中等）
-  - "ok"          : 正常なサイト
-- URLなし → "nosite" で確定（詳細調査は別途実施）
+【判定フロー — 必ず順番通りに実行】
 
-JSONのみ（説明不要）:
-[{"name":"工場名","url":"URL","phone":"電話","errorType":"コード","detail":"1行メモ","address":"住所"}]`;
+▶ URLの記載がある場合:
+① 実際にURLへアクセスして疎通確認
+   - 接続不能 → errorType = "ssl" / "dns" / "notfound" で分類
+   - 接続可能 → ②へ
+② 公開情報の有益性を確認
+   - 有益（正常な会社情報・サービス紹介がある）→ errorType = "ok"
+   - 有益でない（移転しました・更新中・工事中・全く関係ないページ）→ errorType = "content_bad"
+
+▶ URL記載なしの場合:
+③ Google Mapsで正式社名（有限会社・株式会社等の法人格含む）＋電話番号で検索
+   - 自社サイト発見 → ②の有益性確認へ（urlに発見したURLを記入、siteSource="googlemap"）
+   - 未発見 → ④へ
+④ ポータルサイト・間借りサイトも含めて検索（食べログ・Googleビジネス・mapion・itp.ne.jp等）
+   - 間借りサイト発見 → errorType = "kakari"、urlにポータルURLを記入、siteSource="portal"
+   - 本当になにもない → errorType = "nosite_none"、siteSource="none"
+
+【大目的評価 — errorType が "ok" の場合のみ入力、他は省略可】
+以下6項目を 0〜100 でスコアリング（高いほど問題あり = 営業チャンス大）:
+- dasai: デザインが古い・ダサい
+- nosns: SNS（Instagram/LINE/X等）連携が弱い・なし
+- noai: チャットbot・AI予約・先進機能なし
+- nolink: 振興会等公的サイトとの連携なし
+- nosite: サイト情報が薄い・少ない
+- broken: リンク切れ・表示不安定
+
+JSONのみ返してください（説明文・コメント不要）:
+[{"name":"工場名","url":"確定URL","phone":"電話","address":"住所","errorType":"ssl|dns|notfound|content_bad|kakari|nosite_none|ok","detail":"1行メモ","siteSource":"official|googlemap|portal|none","daimokuteki":{"dasai":50,"nosns":80,"noai":90,"nolink":60,"nosite":30,"broken":10}}]`;
 
         const checkText = await callAI(analysisProv, analysisKey,
           [{ role: "user", content: checkPrompt }],
@@ -837,10 +867,10 @@ ${checkText.substring(0,3000)}` },
         allChecked = [...allChecked, ...checked];
       }
 
-      // URLなし工場でSTEP 2に含まれなかったものを nosite で補完
+      // AIが返さなかった工場を nosite_none でフォールバック補完
       members.forEach(m => {
         if (!allChecked.find(c => c.name && m.name && (c.name.includes(m.name.slice(0,4)) || m.name.includes(c.name.slice(0,4))))) {
-          allChecked.push({ name: m.name, url: m.url || "", phone: m.phone || "", address: m.address || "", errorType: "nosite", detail: "チェック未実施" });
+          allChecked.push({ name: m.name, url: m.url || "", phone: m.phone || "", address: m.address || "", errorType: "nosite_none", siteSource: "none", detail: "スキャン未処理" });
         }
       });
 
@@ -850,7 +880,7 @@ ${checkText.substring(0,3000)}` },
         const results = checked.map(r => ({
           ...r,
           id: uid(),
-          errorType: ["ssl","dns","notfound","content_bad","nosite","nosite_none","ok"].includes(r.errorType) ? r.errorType : "nosite",
+          errorType: ["ssl","dns","notfound","content_bad","kakari","nosite_none","ok"].includes(r.errorType) ? r.errorType : "nosite_none",
           jaspaSource: jaspaInfo.url,
           ken: jaspaRegion,
         }));
@@ -893,20 +923,19 @@ ${checkText.substring(0,3000)}` },
 
     try {
       const jaspaInfo = getJaspaUrl(jaspaRegion);
-      const checkPrompt = `以下の自動車整備工場のウェブサイトURLを1件ずつ確認してください。
+      const checkPrompt = `以下の自動車整備工場を仕様書フローに沿って1件ずつ調査してください。
 
-${members.map((m, i) => `${i+1}. ${m.name} — URL: ${m.url || "なし"} — TEL: ${m.phone || "不明"}`).join("\n")}
+${members.map((m, i) => `${i+1}. ${m.name} | URL: ${m.url || "なし"} | TEL: ${m.phone || "不明"}`).join("\n")}
 
-各URLについて以下を判定してください：
-- URLが空・なし → まずWeb検索で自社サイトを探し、見つからなければ "nosite"
-- "ssl": HTTPSだがSSL証明書エラー
-- "dns": ドメイン自体が存在しない
-- "notfound": ページが存在しない（404等）
-- "nosite": URLなし・サイト存在しない
-- "ok": 正常にアクセス可能
+【判定フロー】
+① URLあり → アクセスして疎通確認 → 有効なら「公開情報が有益か？」
+  - 有益 → errorType="ok"  /  有益でない（移転・工事中等）→ errorType="content_bad"
+  - 接続不能 → "ssl" / "dns" / "notfound"
+② URLなし → 正式社名でGoogle Maps検索 → 発見→有益性判定 / 未発見→ポータル検索
+  - ポータル発見 → errorType="kakari"  /  本当になにもない → errorType="nosite_none"
 
 JSONのみ返してください:
-[{"name":"工場名","url":"URL","phone":"電話","errorType":"ssl/dns/notfound/nosite/ok","detail":"エラー詳細","address":"住所"}]`;
+[{"name":"工場名","url":"確定URL","phone":"電話","address":"住所","errorType":"ssl|dns|notfound|content_bad|kakari|nosite_none|ok","detail":"1行メモ","siteSource":"official|googlemap|portal|none"}]`;
 
       const checkText = await callAI(analysisProv, analysisKey,
         [{ role: "user", content: checkPrompt }],
@@ -927,7 +956,7 @@ JSONのみ返してください:
         const results = checked.map(r => ({
           ...r,
           id: uid(),
-          errorType: ["ssl","dns","notfound","content_bad","nosite","nosite_none","ok"].includes(r.errorType) ? r.errorType : "nosite",
+          errorType: ["ssl","dns","notfound","content_bad","kakari","nosite_none","ok"].includes(r.errorType) ? r.errorType : "nosite_none",
           jaspaSource: jaspaInfo ? jaspaInfo.url : "",
           ken: jaspaRegion,
         }));
@@ -1064,6 +1093,28 @@ JSON配列のみ返すこと（説明文不要）:
       return acc + ((100 - s) * c.weight / 100);
     }, 0);
     return Math.round(total);
+  };
+
+  // 大目的6項目スコアからダサさスコアを算出
+  const calcDasaiFromDaimoku = (d) => {
+    if (!d) return 60;
+    let total = 0, totalW = 0;
+    DAIMOKUTEKI.forEach(({ key, weight }) => {
+      total += (d[key] != null ? d[key] : 60) * weight;
+      totalW += weight;
+    });
+    return totalW > 0 ? Math.round(total / totalW) : 60;
+  };
+
+  // nosite_none 工場を通常ハントに送る
+  const sendToHunt = (ken) => {
+    setRegion("__custom__");
+    setCustomRegion(ken || jaspaRegion);
+    setIndustry("自動車整備");
+    setCustomIndustry("");
+    setHuntResults([]);
+    setHuntError("");
+    setTab("hunt");
   };
 
   const addToLeads = (result) => {
@@ -1777,8 +1828,11 @@ JSON配列のみ返すこと（説明文不要）:
         {/* ── JASPA TAB ── */}
         {tab === "jaspa" && (
           <div>
-            <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 4, color: "#10b981" }}>🔧 振興会スキャン</div>
-            <div style={{ fontSize: 12, color: text2, marginBottom: 16 }}>整備振興会の会員リストを取得し、各サイトのエラーを自動判定してリード化します</div>
+            <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 4, color: "#10b981" }}>🔧 振興会スキャン — ルート b</div>
+            <div style={{ fontSize: 12, color: text2, marginBottom: 4 }}>整備振興会の会員名簿からURLを取得し、仕様書フローに沿って全件を自動診断します</div>
+            <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 16, background: "#0a0a14", borderRadius: 6, padding: "8px 12px" }}>
+              📋 フロー: URL有効性確認 → 公開情報の有益性判定 → Google Maps社名検索 → ポータル/間借り確認 → 大目的6項目スコアリング
+            </div>
 
             {/* 都道府県選択 */}
             <div style={{ background: card, border: `1px solid ${border}`, borderRadius: 10, padding: 16, marginBottom: 16 }}>
@@ -1853,34 +1907,50 @@ JSON配列のみ返すこと（説明文不要）:
             )}
 
             {jaspaResults.length > 0 && (() => {
-              const errOrder = ["ssl","dns","notfound","content_bad","nosite","nosite_none","ok"];
+              const errOrder = ["ssl","dns","notfound","content_bad","kakari","nosite_none","ok"];
               const sorted = [...jaspaResults].sort((a,b) => errOrder.indexOf(a.errorType) - errOrder.indexOf(b.errorType));
               const counts = {};
               errOrder.forEach(e => { counts[e] = jaspaResults.filter(r => r.errorType === e).length; });
+              // 問題あり = ok以外
+              const problemCount = jaspaResults.filter(r => r.errorType !== "ok").length;
+              // okでも大目的スコアが高い（要注目）サイト
+              const okHighScore = jaspaResults.filter(r => r.errorType === "ok" && r.daimokuteki && calcDasaiFromDaimoku(r.daimokuteki) >= 40);
 
               return (
                 <div>
-                  {/* サマリー */}
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 8, marginBottom: 16 }}>
+                  {/* サマリー — 7カラム */}
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 6, marginBottom: 16 }}>
                     {errOrder.map(e => {
                       const et = ERROR_TYPES[e];
                       return (
-                        <div key={e} style={{ background: card, border: `1px solid ${et.color}33`, borderRadius: 8, padding: "10px 8px", textAlign: "center" }}>
-                          <div style={{ fontSize: 20 }}>{et.icon}</div>
-                          <div style={{ fontSize: 22, fontWeight: 900, color: et.color }}>{counts[e]}</div>
-                          <div style={{ fontSize: 10, color: text2 }}>{et.label}</div>
+                        <div key={e} style={{ background: card, border: `1px solid ${et.color}33`, borderRadius: 8, padding: "10px 6px", textAlign: "center" }}>
+                          <div style={{ fontSize: 18 }}>{et.icon}</div>
+                          <div style={{ fontSize: 22, fontWeight: 900, color: et.color }}>{counts[e] || 0}</div>
+                          <div style={{ fontSize: 9, color: text2, lineHeight: 1.3 }}>{et.label}</div>
                         </div>
                       );
                     })}
                   </div>
 
                   <div style={{ fontSize: 13, fontWeight: 700, color: text2, marginBottom: 10 }}>
-                    {jaspaResults.length}件スキャン完了 — 問題あり: {jaspaResults.filter(r => r.errorType !== "ok").length}件
+                    {jaspaResults.length}件スキャン完了 —
+                    <span style={{ color: accent }}> 問題あり: {problemCount}件</span>
+                    {okHighScore.length > 0 && <span style={{ color: "#f59e0b" }}> / 正常だが要注目: {okHighScore.length}件</span>}
                   </div>
 
                   {sorted.filter(r => r.errorType !== "ok").map(r => {
-                    const et = ERROR_TYPES[r.errorType];
+                    const et = ERROR_TYPES[r.errorType] || ERROR_TYPES.nosite_none;
                     const alreadyAdded = leads.find(l => l.phone === r.phone && r.phone);
+                    const dasai = r.errorType==="ssl"||r.errorType==="dns" ? 95
+                      : r.errorType==="notfound" ? 90
+                      : r.errorType==="kakari" ? 88
+                      : r.errorType==="content_bad" ? 85
+                      : r.errorType==="nosite_none" ? 100 : 80;
+                    const scr = r.errorType==="ssl" ? { responsive:30, design:20, security:0, integration:10 }
+                      : r.errorType==="kakari" ? { responsive:0, design:10, security:30, integration:20 }
+                      : r.errorType==="nosite_none" ? { responsive:0, design:0, security:0, integration:0 }
+                      : r.errorType==="content_bad" ? { responsive:15, design:10, security:40, integration:10 }
+                      : { responsive:0, design:0, security:0, integration:0 };
                     return (
                       <div key={r.id} style={{
                         background: card, border: `1px solid ${et.color}44`,
@@ -1895,6 +1965,12 @@ JSON配列のみ返すこと（説明文不要）:
                               <span style={{ fontSize: 11, fontWeight: 700, color: et.color, background: et.color + "18", border: `1px solid ${et.color}44`, borderRadius: 4, padding: "2px 8px" }}>
                                 {et.label}
                               </span>
+                              {r.siteSource === "googlemap" && (
+                                <span style={{ fontSize: 10, color: "#34d399", background: "#34d39918", border: "1px solid #34d39944", borderRadius: 4, padding: "2px 6px" }}>Google Maps発見</span>
+                              )}
+                              {r.siteSource === "portal" && (
+                                <span style={{ fontSize: 10, color: "#a78bfa", background: "#a78bfa18", border: "1px solid #a78bfa44", borderRadius: 4, padding: "2px 6px" }}>🏚️ ポータル経由</span>
+                              )}
                               {r.certType && r.certType !== "不明" && (() => {
                                 const isShitei = r.certType.includes("指定");
                                 const cc = isShitei ? "#a78bfa" : "#10b981";
@@ -1905,7 +1981,7 @@ JSON配列のみ返すこと（説明文不要）:
                                 );
                               })()}
                             </div>
-                            {r.url && <div style={{ fontSize: 11, color: "#6699cc", marginBottom: 2 }}>🔗 {r.url}</div>}
+                            {r.url && <div style={{ fontSize: 11, color: "#6699cc", marginBottom: 2 }}>🔗 <a href={r.url} target="_blank" rel="noopener" style={{ color: "#6699cc" }}>{r.url}</a></div>}
                             {r.phone && <div style={{ fontSize: 12, color: text2 }}>📞 {r.phone}</div>}
                             {r.address && <div style={{ fontSize: 11, color: text2 }}>📍 {r.address}</div>}
                             {r.detail && <div style={{ fontSize: 11, color: text2, marginTop: 2 }}>⚠️ {r.detail}</div>}
@@ -1915,54 +1991,141 @@ JSON配列のみ返すこと（説明文不要）:
                               </div>
                             )}
                           </div>
-                          <button
-                            onClick={() => {
-                              if (alreadyAdded) return;
-                              setLeads(prev => [...prev, {
-                                id: uid(), name: r.name, url: r.url || "", phone: r.phone || "",
-                                scores: {
-                                  responsive: (r.errorType==="nosite"||r.errorType==="nosite_none") ? 0 : r.errorType==="content_bad" ? 15 : 40,
-                                  design: r.errorType==="content_bad" ? 10 : 20,
-                                  security: r.errorType==="ssl" ? 0 : 40,
-                                  integration: 10
-                                },
-                                dasaiScore: r.errorType==="ssl"||r.errorType==="dns" ? 95
-                                  : r.errorType==="nosite_none" ? 100
-                                  : r.errorType==="nosite" ? 95
-                                  : r.errorType==="content_bad" ? 85
-                                  : 80,
-                                issues: [et.label + (r.detail ? "："+r.detail : "")],
-                                cms: (r.errorType==="nosite"||r.errorType==="nosite_none") ? "サイトなし" : r.errorType==="content_bad" ? "表示異常" : "エラー",
-                                cmsRisk: 5, approach: "攻め",
-                                approachReason: et.label + "のため即営業推奨",
-                                killPhrase: et.kill,
-                                opportunity: `振興会会員だが${et.label}の状態`,
-                                status: "未着手", memos: [], nextAction: "", nextDate: "",
-                                region: r.ken || jaspaRegion, industry: "自動車整備",
-                                addedAt: new Date().toISOString(),
-                              }]);
-                            }}
-                            disabled={!!alreadyAdded}
-                            style={{ ...btnSecondary, marginLeft: 12, flexShrink: 0, opacity: alreadyAdded ? 0.4 : 1 }}>
-                            {alreadyAdded ? "追加済" : "＋ リードに追加"}
-                          </button>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginLeft: 12, flexShrink: 0 }}>
+                            <button
+                              onClick={() => {
+                                if (alreadyAdded) return;
+                                setLeads(prev => [...prev, {
+                                  id: uid(), name: r.name, url: r.url || "", phone: r.phone || "",
+                                  scores: scr, dasaiScore: dasai,
+                                  issues: [et.label + (r.detail ? "："+r.detail : "")],
+                                  cms: r.errorType==="nosite_none"||r.errorType==="kakari" ? "サイトなし相当" : r.errorType==="content_bad" ? "表示異常" : "エラー",
+                                  cmsRisk: 5, approach: "攻め",
+                                  approachReason: et.label + "のため即営業推奨",
+                                  killPhrase: et.kill,
+                                  opportunity: `振興会会員だが${et.label}の状態`,
+                                  status: "未着手", memos: [], nextAction: "", nextDate: "",
+                                  region: r.ken || jaspaRegion, industry: "自動車整備",
+                                  addedAt: new Date().toISOString(),
+                                }]);
+                              }}
+                              disabled={!!alreadyAdded}
+                              style={{ ...btnSecondary, opacity: alreadyAdded ? 0.4 : 1, fontSize: 12 }}>
+                              {alreadyAdded ? "追加済" : "＋ リードに追加"}
+                            </button>
+                            {r.errorType === "nosite_none" && (
+                              <button
+                                onClick={() => sendToHunt(r.ken || jaspaRegion)}
+                                style={{ background: "#f97316", color: "#fff", border: "none", borderRadius: 6, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                                🎯 通常ハントへ
+                              </button>
+                            )}
+                          </div>
                         </div>
                       </div>
                     );
                   })}
 
-                  {sorted.filter(r => r.errorType === "ok").length > 0 && (
-                    <details style={{ marginTop: 8 }}>
-                      <summary style={{ fontSize: 12, color: text2, cursor: "pointer", padding: "8px 0" }}>
-                        ✅ 正常サイト {sorted.filter(r => r.errorType === "ok").length}件（営業対象外）
-                      </summary>
-                      {sorted.filter(r => r.errorType === "ok").map(r => (
-                        <div key={r.id} style={{ fontSize: 12, color: text2, padding: "4px 8px" }}>
-                          ✅ {r.name} — {r.url}
-                        </div>
-                      ))}
-                    </details>
-                  )}
+                  {/* ── ok サイト — 大目的スコアで評価・分類 ── */}
+                  {sorted.filter(r => r.errorType === "ok").length > 0 && (() => {
+                    const okItems = sorted.filter(r => r.errorType === "ok");
+                    const okHigh = okItems.filter(r => calcDasaiFromDaimoku(r.daimokuteki) >= 40);
+                    const okLow  = okItems.filter(r => calcDasaiFromDaimoku(r.daimokuteki) < 40);
+                    return (
+                      <div>
+                        {okHigh.length > 0 && (
+                          <div style={{ marginTop: 12, marginBottom: 8 }}>
+                            <div style={{ fontSize: 13, fontWeight: 700, color: "#f59e0b", marginBottom: 8 }}>
+                              ✅ 正常サイトだが大目的スコアで要注目 — {okHigh.length}件
+                            </div>
+                            {okHigh.map(r => {
+                              const score = calcDasaiFromDaimoku(r.daimokuteki);
+                              const alreadyAdded = leads.find(l => l.phone === r.phone && r.phone);
+                              const issues = r.daimokuteki ? DAIMOKUTEKI.filter(d => (r.daimokuteki[d.key] || 0) >= 60).map(d => d.label) : [];
+                              const okScores = r.daimokuteki ? {
+                                responsive: 100 - (r.daimokuteki.dasai || 50),
+                                design: 100 - (r.daimokuteki.dasai || 50),
+                                security: 100 - (r.daimokuteki.broken || 0),
+                                integration: 100 - (r.daimokuteki.nosns || 50),
+                              } : { responsive: 60, design: 60, security: 80, integration: 60 };
+                              return (
+                                <div key={r.id} style={{
+                                  background: card, border: "1px solid #f59e0b44",
+                                  borderLeft: "4px solid #f59e0b",
+                                  borderRadius: 10, padding: 14, marginBottom: 8,
+                                }}>
+                                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                                    <div style={{ flex: 1 }}>
+                                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+                                        <span>✅</span>
+                                        <span style={{ fontSize: 14, fontWeight: 700 }}>{r.name}</span>
+                                        <span style={{ fontSize: 12, fontWeight: 900, color: score >= 70 ? accent : "#f59e0b" }}>ダサさ {score}点</span>
+                                        {r.siteSource === "googlemap" && (
+                                          <span style={{ fontSize: 10, color: "#34d399", background: "#34d39918", border: "1px solid #34d39944", borderRadius: 4, padding: "2px 6px" }}>Google Maps発見</span>
+                                        )}
+                                      </div>
+                                      {/* 大目的スコアのピル */}
+                                      {r.daimokuteki && (
+                                        <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 6 }}>
+                                          {DAIMOKUTEKI.map(d => {
+                                            const v = r.daimokuteki[d.key] || 0;
+                                            if (v < 40) return null;
+                                            const c = v >= 80 ? accent : v >= 60 ? "#f59e0b" : "#6b7280";
+                                            return (
+                                              <span key={d.key} style={{ fontSize: 10, color: c, background: c+"18", border: `1px solid ${c}44`, borderRadius: 4, padding: "2px 6px" }}>
+                                                {d.icon} {d.label} {v}
+                                              </span>
+                                            );
+                                          })}
+                                        </div>
+                                      )}
+                                      {r.url && <div style={{ fontSize: 11, color: "#6699cc" }}>🔗 <a href={r.url} target="_blank" rel="noopener" style={{ color: "#6699cc" }}>{r.url}</a></div>}
+                                      {r.phone && <div style={{ fontSize: 12, color: text2 }}>📞 {r.phone}</div>}
+                                    </div>
+                                    <button
+                                      onClick={() => {
+                                        if (alreadyAdded) return;
+                                        setLeads(prev => [...prev, {
+                                          id: uid(), name: r.name, url: r.url || "", phone: r.phone || "",
+                                          scores: okScores, dasaiScore: score,
+                                          issues, cms: "要確認", cmsRisk: 3,
+                                          approach: "攻め", approachReason: issues.join("、") + "が改善余地あり",
+                                          killPhrase: issues.length > 0 ? `${issues[0]}が改善できれば、競合と差別化できます` : "",
+                                          opportunity: `振興会会員。正常サイトだが${issues.join("・")}が弱点`,
+                                          status: "未着手", memos: [], nextAction: "", nextDate: "",
+                                          region: r.ken || jaspaRegion, industry: "自動車整備",
+                                          addedAt: new Date().toISOString(),
+                                        }]);
+                                      }}
+                                      disabled={!!alreadyAdded}
+                                      style={{ ...btnSecondary, marginLeft: 12, flexShrink: 0, opacity: alreadyAdded ? 0.4 : 1, fontSize: 12 }}>
+                                      {alreadyAdded ? "追加済" : "＋ リードに追加"}
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {okLow.length > 0 && (
+                          <details style={{ marginTop: 8 }}>
+                            <summary style={{ fontSize: 12, color: text2, cursor: "pointer", padding: "8px 0" }}>
+                              ✅ 問題なし（大目的クリア）{okLow.length}件 — 営業優先度低
+                            </summary>
+                            {okLow.map(r => (
+                              <div key={r.id} style={{ fontSize: 12, color: text2, padding: "4px 8px", display: "flex", gap: 8, alignItems: "center" }}>
+                                <span>✅</span>
+                                <span>{r.name}</span>
+                                <a href={r.url} target="_blank" rel="noopener" style={{ color: "#6699cc", fontSize: 11 }}>{r.url}</a>
+                                {r.daimokuteki && <span style={{ color: "#10b981", fontSize: 10 }}>ダサさ {calcDasaiFromDaimoku(r.daimokuteki)}点</span>}
+                              </div>
+                            ))}
+                          </details>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               );
             })()}
