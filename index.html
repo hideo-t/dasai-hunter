@@ -599,11 +599,13 @@ approach: "攻め"=集客課題, "守り"=採用課題
 
   // ── 振興会スキャン ──
   const ERROR_TYPES = {
-    ssl:    { label: "SSL失効",      icon: "🔴", color: "#ef4444", kill: "今この瞬間も、お客様がセキュリティ警告で離脱し続けています" },
-    dns:    { label: "ドメイン消滅", icon: "💀", color: "#7c3aed", kill: "Googleで検索しても御社サイトに辿り着けない状態です" },
-    notfound: { label: "404エラー",  icon: "🟠", color: "#f97316", kill: "振興会リンクから飛んだお客様が404エラーを見ています" },
-    nosite: { label: "サイトなし",   icon: "⬛", color: "#6b7280", kill: "ネット上に御社の情報が存在しません。競合に差をつけるチャンスです" },
-    ok:     { label: "正常",         icon: "✅", color: "#10b981", kill: "" },
+    ssl:          { label: "SSL失効",      icon: "🔴", color: "#ef4444", kill: "今この瞬間も、お客様がセキュリティ警告で離脱し続けています" },
+    dns:          { label: "ドメイン消滅", icon: "💀", color: "#7c3aed", kill: "Googleで検索しても御社サイトに辿り着けない状態です" },
+    notfound:     { label: "404エラー",    icon: "🟠", color: "#f97316", kill: "振興会リンクから飛んだお客様が404エラーを見ています" },
+    content_bad:  { label: "表示異常",     icon: "⚠️", color: "#eab308", kill: "サイトは存在しますが、削除・移転・エラーページが表示されています" },
+    nosite:       { label: "サイトなし",   icon: "⬛", color: "#6b7280", kill: "ネット上に御社の情報が全く存在しません。今がチャンスです" },
+    nosite_none:  { label: "完全デジタル不在", icon: "🚫", color: "#4b5563", kill: "Google・Map・ネット上のどこにも御社が存在しません。今すぐ始めれば地域最速です" },
+    ok:           { label: "正常",         icon: "✅", color: "#10b981", kill: "" },
   };
 
   const runJaspaScan = async () => {
@@ -739,25 +741,45 @@ JSONのみ返してください（説明文不要）:
         setJaspaScanning(false); return;
       }
 
-      setJaspaPhase(`🔍 ${members.length}件のURLを死活チェック中...`);
+      setJaspaPhase(`🔍 ${members.length}件をチェック中（接続確認＋内容確認＋GoogleMap検索）...`);
 
-      // ── STEP 2: URL死活チェック ──
-      const checkPrompt = `以下の自動車整備工場のウェブサイトURLを1件ずつ確認してください。
+      // ── STEP 2: URL死活チェック＋内容確認＋未URL工場の発見 ──
+      const checkPrompt = `あなたは自動車整備工場のウェブサイト調査員です。以下の工場を1件ずつ調査してください。
 
-${members.map((m, i) => `${i+1}. ${m.name} — URL: ${m.url || "なし"} — TEL: ${m.phone || "不明"}`).join("\n")}
+【調査対象】
+${members.map((m, i) => `${i+1}. ${m.name} — URL: ${m.url || "なし"} — TEL: ${m.phone || "不明"} — 住所: ${m.address || "不明"}`).join("\n")}
 
-各URLについて以下を判定してください：
-- "ssl": HTTPSだがSSL証明書エラー（ERR_CERT_DATE_INVALID等）
-- "dns": ドメイン自体が存在しない（DNS_PROBE_FINISHED_NXDOMAIN等）
-- "notfound": ページが存在しない（404/301移転先なし等）
-- "nosite": URLが空・サイトが存在しない
-- "ok": 正常にアクセス可能
+【調査フロー（各工場について必ず実行）】
 
-URLなし → "nosite" で確定。
-URLありの場合は実際にアクセスして判定すること。
+■ URLが記載されている場合：
+1. そのURLに実際にアクセスする
+2. 接続できない場合 → エラー種別を判定：
+   - "ssl"  : SSL証明書エラー（ERR_CERT_DATE_INVALID等）
+   - "dns"  : ドメイン消滅（DNS_PROBE_FINISHED_NXDOMAIN等）
+   - "notfound": 404/ページなし
+3. 接続できた場合 → ページの内容を確認：
+   - "content_bad" : ページは開くが内容がおかしい（削除されました・移転しました・404エラーページ・工事中・別事業に転用等）
+   - "ok"          : 正常な自動車整備工場のサイトが表示されている
+
+■ URLが記載されていない場合：
+1. 「工場名 + 電話番号」でWeb検索 ＋ Googleマップで検索
+2. 自社サイトが見つかった場合 → そのURLでアクセスし、内容を確認（content_bad or ok）
+3. Googleマップにビジネス情報はあるがサイトなし → "nosite"
+4. Googleマップにも何も存在しない → "nosite_none"（完全デジタル不在）
+
+【判定コード一覧】
+- "ssl"        : SSL失効
+- "dns"        : ドメイン消滅
+- "notfound"   : 404等のページなし
+- "content_bad": 接続できるが内容が異常（削除・移転・404内包ページ等）
+- "nosite"     : URLなし・Googleマップのみ・サイト未発見
+- "nosite_none": URLなし・Googleマップにも存在しない（完全デジタル不在）
+- "ok"         : 正常な事業サイトを確認
+
+また、認証種別（指定工場/認証工場/不明）も調査してください。
 
 JSONのみ返してください:
-[{"name":"工場名","url":"URL","phone":"電話","errorType":"ssl/dns/notfound/nosite/ok","detail":"エラー詳細（1行）","address":"住所"}]`;
+[{"name":"工場名","url":"実際に確認したURL（空でも可）","phone":"電話","errorType":"判定コード","detail":"詳細1行","address":"住所","certType":"指定工場/認証工場/不明"}]`;
 
       const checkText = await callAI(analysisProv, analysisKey,
         [{ role: "user", content: checkPrompt }],
@@ -780,7 +802,7 @@ JSONのみ返してください:
         const results = checked.map(r => ({
           ...r,
           id: uid(),
-          errorType: ["ssl","dns","notfound","nosite","ok"].includes(r.errorType) ? r.errorType : "nosite",
+          errorType: ["ssl","dns","notfound","content_bad","nosite","nosite_none","ok"].includes(r.errorType) ? r.errorType : "nosite",
           jaspaSource: jaspaInfo.url,
           ken: jaspaRegion,
         }));
@@ -857,7 +879,7 @@ JSONのみ返してください:
         const results = checked.map(r => ({
           ...r,
           id: uid(),
-          errorType: ["ssl","dns","notfound","nosite","ok"].includes(r.errorType) ? r.errorType : "nosite",
+          errorType: ["ssl","dns","notfound","content_bad","nosite","nosite_none","ok"].includes(r.errorType) ? r.errorType : "nosite",
           jaspaSource: jaspaInfo ? jaspaInfo.url : "",
           ken: jaspaRegion,
         }));
@@ -1783,7 +1805,7 @@ JSON配列のみ返すこと（説明文不要）:
             )}
 
             {jaspaResults.length > 0 && (() => {
-              const errOrder = ["ssl","dns","notfound","nosite","ok"];
+              const errOrder = ["ssl","dns","notfound","content_bad","nosite","nosite_none","ok"];
               const sorted = [...jaspaResults].sort((a,b) => errOrder.indexOf(a.errorType) - errOrder.indexOf(b.errorType));
               const counts = {};
               errOrder.forEach(e => { counts[e] = jaspaResults.filter(r => r.errorType === e).length; });
@@ -1819,12 +1841,21 @@ JSON配列のみ返すこと（説明文不要）:
                       }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                           <div style={{ flex: 1 }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
                               <span style={{ fontSize: 16 }}>{et.icon}</span>
                               <span style={{ fontSize: 14, fontWeight: 700 }}>{r.name}</span>
                               <span style={{ fontSize: 11, fontWeight: 700, color: et.color, background: et.color + "18", border: `1px solid ${et.color}44`, borderRadius: 4, padding: "2px 8px" }}>
                                 {et.label}
                               </span>
+                              {r.certType && r.certType !== "不明" && (() => {
+                                const isShitei = r.certType.includes("指定");
+                                const cc = isShitei ? "#a78bfa" : "#10b981";
+                                return (
+                                  <span style={{ fontSize: 10, fontWeight: 700, color: cc, background: cc+"18", border: `1px solid ${cc}44`, borderRadius: 4, padding: "2px 8px" }}>
+                                    {isShitei ? "🏆 指定工場" : "🔧 認証工場"}
+                                  </span>
+                                );
+                              })()}
                             </div>
                             {r.url && <div style={{ fontSize: 11, color: "#6699cc", marginBottom: 2 }}>🔗 {r.url}</div>}
                             {r.phone && <div style={{ fontSize: 12, color: text2 }}>📞 {r.phone}</div>}
@@ -1841,10 +1872,19 @@ JSON配列のみ返すこと（説明文不要）:
                               if (alreadyAdded) return;
                               setLeads(prev => [...prev, {
                                 id: uid(), name: r.name, url: r.url || "", phone: r.phone || "",
-                                scores: { responsive: r.errorType==="nosite"?0:40, design: 20, security: r.errorType==="ssl"?0:40, integration: 10 },
-                                dasaiScore: r.errorType==="ssl"||r.errorType==="dns" ? 95 : r.errorType==="nosite" ? 100 : 80,
+                                scores: {
+                                  responsive: (r.errorType==="nosite"||r.errorType==="nosite_none") ? 0 : r.errorType==="content_bad" ? 15 : 40,
+                                  design: r.errorType==="content_bad" ? 10 : 20,
+                                  security: r.errorType==="ssl" ? 0 : 40,
+                                  integration: 10
+                                },
+                                dasaiScore: r.errorType==="ssl"||r.errorType==="dns" ? 95
+                                  : r.errorType==="nosite_none" ? 100
+                                  : r.errorType==="nosite" ? 95
+                                  : r.errorType==="content_bad" ? 85
+                                  : 80,
                                 issues: [et.label + (r.detail ? "："+r.detail : "")],
-                                cms: r.errorType==="nosite" ? "サイトなし" : "エラー",
+                                cms: (r.errorType==="nosite"||r.errorType==="nosite_none") ? "サイトなし" : r.errorType==="content_bad" ? "表示異常" : "エラー",
                                 cmsRisk: 5, approach: "攻め",
                                 approachReason: et.label + "のため即営業推奨",
                                 killPhrase: et.kill,
