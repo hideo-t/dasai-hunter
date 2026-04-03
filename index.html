@@ -416,7 +416,7 @@ approach: "攻め"=集客課題, "守り"=採用課題
           setScanHistory(prev => [...prev, {
             id: uid(), date: new Date().toISOString(),
             region: searchRegion, industry: searchIndustry,
-            provider: `${AI_PROVIDERS[prov].icon} ${AI_PROVIDERS[prov].name}`,
+            provider: sm.label.split("（")[0] + " → " + (analysisModel || "").split("/").pop(),
             count: results.length,
             results: results,
           }]);
