@@ -14,8 +14,8 @@
 <script type="text/babel">
 const { useState, useEffect, useCallback } = React;
 
-const TABS = ["hunt", "leads", "pipeline", "data"];
-const TAB_LABELS = { hunt: "🎯 ハント", leads: "📋 リード一覧", pipeline: "📊 パイプライン", data: "💾 データ管理" };
+const TABS = ["hunt", "jaspa", "leads", "pipeline", "data"];
+const TAB_LABELS = { hunt: "🎯 ハント", jaspa: "🔧 振興会スキャン", leads: "📋 リード一覧", pipeline: "📊 パイプライン", data: "💾 データ管理" };
 
 const STATUS_FLOW = ["未着手", "初回連絡済", "商談中", "提案済", "契約", "失注"];
 const STATUS_COLORS = {
@@ -33,6 +33,81 @@ const CRITERIA = [
   { key: "security", label: "SSL/速度", icon: "🔒", weight: 20 },
   { key: "integration", label: "SNS/Maps未連携", icon: "🔗", weight: 15 },
 ];
+
+// ── 都道府県別 自動車整備振興会・商工組合 URL ──
+const JASPA_URLS = {
+  "北海道": "http://www.sss.or.jp/",
+  "札幌": "http://www.sss.or.jp/",
+  "函館": "http://www.hakodate-oasis.com/",
+  "青森": "http://www.oasis-aomori.or.jp/",
+  "岩手": "http://www.jaspa-iwate.or.jp/",
+  "宮城": "http://www.oasis-miyagi.or.jp/",
+  "仙台": "http://www.oasis-miyagi.or.jp/",
+  "秋田": "http://jaspa-akita.or.jp/",
+  "山形": "http://www.jaspa-yamagata.or.jp/",
+  "福島": "http://www.jaspa-fukushima.or.jp/",
+  "白河": "http://www.jaspa-fukushima.or.jp/",
+  "郡山": "http://www.jaspa-fukushima.or.jp/",
+  "いわき": "http://www.jaspa-fukushima.or.jp/",
+  "茨城": "http://www.seibi.or.jp/",
+  "栃木": "http://www.tochiseishin.or.jp/",
+  "那須塩原": "http://www.tochiseishin.or.jp/",
+  "群馬": "http://www.g-oasis.jp/",
+  "埼玉": "http://www.s-jss.or.jp/",
+  "千葉": "http://www.caspa.or.jp/",
+  "東京": "http://www.tossnet.or.jp/",
+  "神奈川": "http://www.car-jp.com/",
+  "横浜": "http://www.car-jp.com/",
+  "新潟": "http://www.jaspa-niigata.or.jp/",
+  "富山": "http://www.tomi-car.or.jp/",
+  "石川": "http://www.jssnet.ne.jp/",
+  "福井": "http://kurumanopro.or.jp/",
+  "山梨": "http://ams.or.jp/",
+  "長野": "http://www.jaspa-nagano.or.jp/",
+  "岐阜": "http://www.gasca.or.jp/",
+  "静岡": "http://www.sjss.or.jp/",
+  "愛知": "http://www.aiseishin.or.jp/",
+  "名古屋": "http://www.aiseishin.or.jp/",
+  "三重": "http://www.mieaspa.or.jp/",
+  "滋賀": "http://www.saspa.or.jp/",
+  "京都": "http://www.kasnet.or.jp/",
+  "大阪": "http://www.js-osaka.or.jp/",
+  "兵庫": "http://www.haspa.or.jp/",
+  "神戸": "http://www.haspa.or.jp/",
+  "奈良": "http://jasca-nara.jp/",
+  "和歌山": "http://www.waspa.or.jp/",
+  "鳥取": "http://www.taspa.or.jp/",
+  "島根": "http://www.shimasei.jp/",
+  "岡山": "http://www.okaseishou.com/",
+  "広島": "http://hjss.jp/",
+  "山口": "http://www.oasis-yamaguchi.or.jp/",
+  "徳島": "http://www.oasis-tokushima.or.jp/",
+  "香川": "http://www.k-oasis.or.jp/",
+  "愛媛": "http://www.easpa.jp/",
+  "高知": "http://www.jaspa.or.jp/", // 高知は連合会経由
+  "福岡": "http://www.fas.or.jp/",
+  "佐賀": "http://www.jaspa-saga.or.jp/",
+  "長崎": "http://www.boo.or.jp/",
+  "熊本": "http://www.k-aspa.com/",
+  "大分": "http://www.jaspa-oita.or.jp/",
+  "宮崎": "http://jaspa-miyazaki.or.jp/",
+  "鹿児島": "http://www.kjss.or.jp/",
+  "沖縄": "http://www.jaspa-okinawa.or.jp/m/",
+  "那覇": "http://www.jaspa-okinawa.or.jp/m/",
+  "沖縄市": "http://www.jaspa-okinawa.or.jp/m/",
+  "宜野湾": "http://www.jaspa-okinawa.or.jp/m/",
+  "浦添": "http://www.jaspa-okinawa.or.jp/m/",
+  "北谷": "http://www.jaspa-okinawa.or.jp/m/",
+};
+
+const getJaspaUrl = (region) => {
+  if (!region) return null;
+  // 完全一致→部分一致の順で検索
+  for (const [key, url] of Object.entries(JASPA_URLS)) {
+    if (region.includes(key) || key.includes(region)) return { url, ken: key };
+  }
+  return null;
+};
 
 const REGIONS = [
   "白河市", "郡山市", "福島市", "いわき市", "那須塩原市",
@@ -173,6 +248,13 @@ function DasaiHunterSFA() {
   const [landlordChecking, setLandlordChecking] = useState({}); // id→boolean
   const [certChecks, setCertChecks] = useState({}); // 認証チェック結果 id→result
   const [certChecking, setCertChecking] = useState(false); // 一括チェック中
+
+  // ── 振興会スキャン用 ──
+  const [jaspaRegion, setJaspaRegion] = useState("沖縄");
+  const [jaspaScanning, setJaspaScanning] = useState(false);
+  const [jaspaPhase, setJaspaPhase] = useState("");
+  const [jaspaResults, setJaspaResults] = useState([]);
+  const [jaspaError, setJaspaError] = useState("");
 
   // Load from storage
   useEffect(() => {
@@ -526,6 +608,107 @@ approach: "攻め"=集客課題, "守り"=採用課題
     setHuntPhase("");
   };
 
+  // ── 振興会スキャン ──
+  const ERROR_TYPES = {
+    ssl:    { label: "SSL失効",      icon: "🔴", color: "#ef4444", kill: "今この瞬間も、お客様がセキュリティ警告で離脱し続けています" },
+    dns:    { label: "ドメイン消滅", icon: "💀", color: "#7c3aed", kill: "Googleで検索しても御社サイトに辿り着けない状態です" },
+    notfound: { label: "404エラー",  icon: "🟠", color: "#f97316", kill: "振興会リンクから飛んだお客様が404エラーを見ています" },
+    nosite: { label: "サイトなし",   icon: "⬛", color: "#6b7280", kill: "ネット上に御社の情報が存在しません。競合に差をつけるチャンスです" },
+    ok:     { label: "正常",         icon: "✅", color: "#10b981", kill: "" },
+  };
+
+  const runJaspaScan = async () => {
+    const sm = SEARCH_MODELS[searchModel];
+    const searchKey = aiApiKeys[sm.needsKey] || "";
+    if (!searchKey) { setJaspaError("APIキーを設定してください（⚙️ボタン）"); return; }
+
+    const jaspaInfo = getJaspaUrl(jaspaRegion);
+    if (!jaspaInfo) { setJaspaError("対応する振興会URLが見つかりません"); return; }
+
+    setJaspaScanning(true);
+    setJaspaError("");
+    setJaspaResults([]);
+
+    try {
+      // ── STEP 1: 会員リスト取得 ──
+      setJaspaPhase("📋 会員リストを取得中...");
+      const listPrompt = `${jaspaInfo.url} にアクセスして、${jaspaRegion}の自動車整備振興会・商工組合の会員工場リストを取得してください。
+各工場の「工場名・電話番号・公式サイトURL」を全件抽出してください。
+URLが記載されていない工場もリストに含めてください（urlを空文字で）。
+JSONのみ返してください:
+[{"name":"工場名","phone":"電話番号","url":"https://...","address":"住所（あれば）"}]`;
+
+      const listText = await callAI(sm.provider, searchKey,
+        [{ role: "user", content: listPrompt }],
+        { model: sm.model, useWebSearch: true, maxTokens: 6000 }
+      );
+
+      let members = tryParseJSON(listText);
+      if (members.length === 0) {
+        setJaspaError("会員リストの取得に失敗しました。振興会サイトが取得できない可能性があります。");
+        setJaspaScanning(false); return;
+      }
+
+      setJaspaPhase(`🔍 ${members.length}件のURLを死活チェック中...`);
+
+      // ── STEP 2: URL死活チェック ──
+      const checkPrompt = `以下の自動車整備工場のウェブサイトURLを1件ずつ確認してください。
+
+${members.map((m, i) => `${i+1}. ${m.name} — URL: ${m.url || "なし"} — TEL: ${m.phone || "不明"}`).join("\n")}
+
+各URLについて以下を判定してください：
+- "ssl": HTTPSだがSSL証明書エラー（ERR_CERT_DATE_INVALID等）
+- "dns": ドメイン自体が存在しない（DNS_PROBE_FINISHED_NXDOMAIN等）
+- "notfound": ページが存在しない（404/301移転先なし等）
+- "nosite": URLが空・サイトが存在しない
+- "ok": 正常にアクセス可能
+
+URLなし → "nosite" で確定。
+URLありの場合は実際にアクセスして判定すること。
+
+JSONのみ返してください:
+[{"name":"工場名","url":"URL","phone":"電話","errorType":"ssl/dns/notfound/nosite/ok","detail":"エラー詳細（1行）","address":"住所"}]`;
+
+      const analysisProv = aiProvider;
+      const analysisKey = aiApiKeys[analysisProv] || "";
+      const analysisModel = aiModel || AI_PROVIDERS[analysisProv].models[0];
+
+      const checkText = await callAI(analysisProv, analysisKey,
+        [{ role: "user", content: checkPrompt }],
+        { model: analysisModel, maxTokens: 8000 }
+      );
+
+      let checked = tryParseJSON(checkText);
+      if (checked.length === 0) {
+        // リトライ
+        setJaspaPhase("📊 結果を構造化中...");
+        const retry = await callAI(analysisProv, analysisKey,
+          [{ role: "user", content: `以下をJSON配列にしてください:\n${checkText.substring(0,5000)}` },
+           { role: "assistant", content: "[" }],
+          { model: analysisModel, system: "JSON配列のみ返せ。", maxTokens: 4000 }
+        );
+        checked = tryParseJSON("[" + retry);
+      }
+
+      if (checked.length > 0) {
+        const results = checked.map(r => ({
+          ...r,
+          id: uid(),
+          errorType: ["ssl","dns","notfound","nosite","ok"].includes(r.errorType) ? r.errorType : "nosite",
+          jaspaSource: jaspaInfo.url,
+          ken: jaspaRegion,
+        }));
+        setJaspaResults(results);
+      } else {
+        setJaspaError("チェック結果の取得に失敗しました。");
+      }
+    } catch(e) {
+      setJaspaError(`エラー: ${e.message}`);
+    }
+    setJaspaScanning(false);
+    setJaspaPhase("");
+  };
+
   // ── 認証工場チェック（自動車整備のみ）──
   const checkCertifications = async (results) => {
     const sm = SEARCH_MODELS[searchModel];
@@ -534,16 +717,28 @@ approach: "攻め"=集客課題, "守り"=採用課題
 
     setCertChecking(true);
     try {
-      const shopNames = results.map(r => r.name).join("、");
-      const prompt = `沖縄県自動車整備振興会・商工組合の認証工場リストを https://www.jaspa-okinawa.or.jp/m/ から取得してください。
+      const currentRegion = customRegion || region;
+      const jaspaInfo = getJaspaUrl(currentRegion);
+      const jaspaUrl = jaspaInfo ? jaspaInfo.url : null;
+      const jaspaKen = jaspaInfo ? jaspaInfo.ken : currentRegion;
 
-以下の整備工場が認証工場リストに掲載されているか照合してください：
+      const urlNote = jaspaUrl
+        ? `参照URL: ${jaspaUrl}（${jaspaKen}自動車整備振興会・商工組合）`
+        : `「${currentRegion} 自動車整備振興会 認証工場一覧」でWeb検索してください`;
+
+      const prompt = `自動車整備工場の認証・指定工場リストを調べてください。
+
+${urlNote}
+
+以下の整備工場が認証工場・指定工場として掲載されているか照合してください：
 ${results.map((r, i) => `${i+1}. ${r.name}（TEL: ${r.phone || "不明"}）`).join("\n")}
 
 照合方法：
 - 社名の完全一致または部分一致（例：「西自動車商会」が「有限会社西自動車商会」にマッチ）
 - 電話番号が一致する場合も採用
 - 認証番号・認証種別（指定工場/認証工場）も取得してください
+- 「指定工場」= 民間車検場（自社で車検を完結できる）最上位
+- 「認証工場」= 分解整備の認証あり（車検は陸運局に持ち込み）
 
 JSON配列のみ返すこと（説明文不要）:
 [{"name":"照合した店名","isCertified":true/false,"certType":"指定工場/認証工場/なし","jaspaName":"リスト上の正式名称","certNo":"認証番号（あれば）"}]`;
@@ -561,18 +756,17 @@ JSON配列のみ返すこと（説明文不要）:
         } catch { return []; }
       })();
 
-      // 結果をid→resultにマッピング
       const newChecks = {};
       results.forEach(r => {
         const found = parsed.find(p =>
           p.name && (
             r.name.includes(p.name) || p.name.includes(r.name) ||
-            p.jaspaName && (r.name.includes(p.jaspaName) || p.jaspaName.includes(r.name))
+            (p.jaspaName && (r.name.includes(p.jaspaName) || p.jaspaName.includes(r.name)))
           )
         );
         newChecks[r.id] = found
-          ? { isCertified: found.isCertified, certType: found.certType || "不明", jaspaName: found.jaspaName || "", certNo: found.certNo || "" }
-          : { isCertified: false, certType: "未確認", jaspaName: "", certNo: "" };
+          ? { isCertified: found.isCertified, certType: found.certType || "不明", jaspaName: found.jaspaName || "", certNo: found.certNo || "", jaspaUrl: jaspaUrl || "" }
+          : { isCertified: false, certType: "未確認", jaspaName: "", certNo: "", jaspaUrl: jaspaUrl || "" };
       });
       setCertChecks(newChecks);
     } catch(e) {
@@ -922,22 +1116,32 @@ JSON配列のみ返すこと（説明文不要）:
                   </div>
                   {/* 自動車整備の場合のみ認証チェックボタン表示 */}
                   {(customIndustry || industry).includes("自動車整備") && (
-                    <button
-                      onClick={() => checkCertifications(huntResults)}
-                      disabled={certChecking}
-                      style={{
-                        background: certChecking ? "#1a1a2e" : "#10b98118",
-                        border: "1px solid #10b98144", borderRadius: 8,
-                        color: "#10b981", padding: "8px 16px", fontSize: 12, fontWeight: 700,
-                        cursor: certChecking ? "not-allowed" : "pointer",
-                        display: "flex", alignItems: "center", gap: 6,
-                        opacity: certChecking ? 0.7 : 1,
-                      }}>
-                      {certChecking
-                        ? <><span style={{ animation: "pulse 1s infinite", display:"inline-block" }}>🔍</span> jaspa照合中...</>
-                        : <><span>🔧</span> 民間車検・認証工場を一括チェック</>
-                      }
-                    </button>
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+                      {(() => {
+                        const ji = getJaspaUrl(customRegion || region);
+                        return ji ? (
+                          <div style={{ fontSize: 10, color: "#10b98188" }}>
+                            📋 <a href={ji.url} target="_blank" rel="noopener" style={{ color: "#10b98188", textDecoration: "none" }}>{ji.ken}自動車整備振興会</a>
+                          </div>
+                        ) : null;
+                      })()}
+                      <button
+                        onClick={() => checkCertifications(huntResults)}
+                        disabled={certChecking}
+                        style={{
+                          background: certChecking ? "#1a1a2e" : "#10b98118",
+                          border: "1px solid #10b98144", borderRadius: 8,
+                          color: "#10b981", padding: "8px 16px", fontSize: 12, fontWeight: 700,
+                          cursor: certChecking ? "not-allowed" : "pointer",
+                          display: "flex", alignItems: "center", gap: 6,
+                          opacity: certChecking ? 0.7 : 1,
+                        }}>
+                        {certChecking
+                          ? <><span style={{ animation: "pulse 1s infinite", display:"inline-block" }}>🔍</span> jaspa照合中...</>
+                          : <><span>🔧</span> 民間車検・認証工場を一括チェック</>
+                        }
+                      </button>
+                    </div>
                   )}
                 </div>
                 {[...huntResults].sort((a, b) => b.dasaiScore - a.dasaiScore).map(r => (
@@ -1334,6 +1538,144 @@ JSON配列のみ返すこと（説明文不要）:
                   ))}
               </div>
             )}
+          </div>
+        )}
+
+        {/* ── JASPA TAB ── */}
+        {tab === "jaspa" && (
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 4, color: "#10b981" }}>🔧 振興会スキャン</div>
+            <div style={{ fontSize: 12, color: text2, marginBottom: 16 }}>整備振興会の会員リストを取得し、各サイトのエラーを自動判定してリード化します</div>
+
+            {/* 都道府県選択 */}
+            <div style={{ background: card, border: `1px solid ${border}`, borderRadius: 10, padding: 16, marginBottom: 16 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: text2, marginBottom: 8 }}>📍 スキャン対象の都道府県</div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <select value={jaspaRegion} onChange={e => setJaspaRegion(e.target.value)}
+                  style={{ ...inputStyle, width: "auto", minWidth: 140 }}>
+                  {Object.keys(JASPA_URLS).filter((k,i,a) => a.findIndex(x => JASPA_URLS[x]===JASPA_URLS[k])===i).map(k => (
+                    <option key={k} value={k}>{k}</option>
+                  ))}
+                </select>
+                {getJaspaUrl(jaspaRegion) && (
+                  <a href={getJaspaUrl(jaspaRegion).url} target="_blank" rel="noopener"
+                    style={{ fontSize: 11, color: "#10b981", textDecoration: "none" }}>
+                    🔗 {getJaspaUrl(jaspaRegion).url}
+                  </a>
+                )}
+              </div>
+
+              <button onClick={runJaspaScan} disabled={jaspaScanning}
+                style={{ ...btnPrimary, background: "#10b981", marginTop: 12, width: "100%", opacity: jaspaScanning ? 0.6 : 1 }}>
+                {jaspaScanning ? jaspaPhase : "🔍 振興会スキャン実行"}
+              </button>
+              {jaspaError && <div style={{ color: accent, fontSize: 12, marginTop: 8 }}>{jaspaError}</div>}
+            </div>
+
+            {jaspaScanning && (
+              <div style={{ textAlign: "center", padding: 40, color: text2 }}>
+                <div style={{ fontSize: 40, marginBottom: 12, animation: "pulse 1.5s infinite" }}>🔧</div>
+                <div style={{ fontSize: 14 }}>{jaspaRegion}の振興会会員をスキャン中...</div>
+                <div style={{ fontSize: 13, marginTop: 6, color: "#10b981" }}>{jaspaPhase}</div>
+              </div>
+            )}
+
+            {jaspaResults.length > 0 && (() => {
+              const errOrder = ["ssl","dns","notfound","nosite","ok"];
+              const sorted = [...jaspaResults].sort((a,b) => errOrder.indexOf(a.errorType) - errOrder.indexOf(b.errorType));
+              const counts = {};
+              errOrder.forEach(e => { counts[e] = jaspaResults.filter(r => r.errorType === e).length; });
+
+              return (
+                <div>
+                  {/* サマリー */}
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 8, marginBottom: 16 }}>
+                    {errOrder.map(e => {
+                      const et = ERROR_TYPES[e];
+                      return (
+                        <div key={e} style={{ background: card, border: `1px solid ${et.color}33`, borderRadius: 8, padding: "10px 8px", textAlign: "center" }}>
+                          <div style={{ fontSize: 20 }}>{et.icon}</div>
+                          <div style={{ fontSize: 22, fontWeight: 900, color: et.color }}>{counts[e]}</div>
+                          <div style={{ fontSize: 10, color: text2 }}>{et.label}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div style={{ fontSize: 13, fontWeight: 700, color: text2, marginBottom: 10 }}>
+                    {jaspaResults.length}件スキャン完了 — 問題あり: {jaspaResults.filter(r => r.errorType !== "ok").length}件
+                  </div>
+
+                  {sorted.filter(r => r.errorType !== "ok").map(r => {
+                    const et = ERROR_TYPES[r.errorType];
+                    const alreadyAdded = leads.find(l => l.phone === r.phone && r.phone);
+                    return (
+                      <div key={r.id} style={{
+                        background: card, border: `1px solid ${et.color}44`,
+                        borderLeft: `4px solid ${et.color}`,
+                        borderRadius: 10, padding: 14, marginBottom: 8,
+                      }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                              <span style={{ fontSize: 16 }}>{et.icon}</span>
+                              <span style={{ fontSize: 14, fontWeight: 700 }}>{r.name}</span>
+                              <span style={{ fontSize: 11, fontWeight: 700, color: et.color, background: et.color + "18", border: `1px solid ${et.color}44`, borderRadius: 4, padding: "2px 8px" }}>
+                                {et.label}
+                              </span>
+                            </div>
+                            {r.url && <div style={{ fontSize: 11, color: "#6699cc", marginBottom: 2 }}>🔗 {r.url}</div>}
+                            {r.phone && <div style={{ fontSize: 12, color: text2 }}>📞 {r.phone}</div>}
+                            {r.address && <div style={{ fontSize: 11, color: text2 }}>📍 {r.address}</div>}
+                            {r.detail && <div style={{ fontSize: 11, color: text2, marginTop: 2 }}>⚠️ {r.detail}</div>}
+                            {et.kill && (
+                              <div style={{ marginTop: 8, fontSize: 12, color: "#fbbf24", background: "#fbbf2410", borderRadius: 6, padding: "6px 10px", borderLeft: "3px solid #fbbf24" }}>
+                                🗡️ 「{et.kill}」
+                              </div>
+                            )}
+                          </div>
+                          <button
+                            onClick={() => {
+                              if (alreadyAdded) return;
+                              setLeads(prev => [...prev, {
+                                id: uid(), name: r.name, url: r.url || "", phone: r.phone || "",
+                                scores: { responsive: r.errorType==="nosite"?0:40, design: 20, security: r.errorType==="ssl"?0:40, integration: 10 },
+                                dasaiScore: r.errorType==="ssl"||r.errorType==="dns" ? 95 : r.errorType==="nosite" ? 100 : 80,
+                                issues: [et.label + (r.detail ? "："+r.detail : "")],
+                                cms: r.errorType==="nosite" ? "サイトなし" : "エラー",
+                                cmsRisk: 5, approach: "攻め",
+                                approachReason: et.label + "のため即営業推奨",
+                                killPhrase: et.kill,
+                                opportunity: `振興会会員だが${et.label}の状態`,
+                                status: "未着手", memos: [], nextAction: "", nextDate: "",
+                                region: r.ken || jaspaRegion, industry: "自動車整備",
+                                addedAt: new Date().toISOString(),
+                              }]);
+                            }}
+                            disabled={!!alreadyAdded}
+                            style={{ ...btnSecondary, marginLeft: 12, flexShrink: 0, opacity: alreadyAdded ? 0.4 : 1 }}>
+                            {alreadyAdded ? "追加済" : "＋ リードに追加"}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {sorted.filter(r => r.errorType === "ok").length > 0 && (
+                    <details style={{ marginTop: 8 }}>
+                      <summary style={{ fontSize: 12, color: text2, cursor: "pointer", padding: "8px 0" }}>
+                        ✅ 正常サイト {sorted.filter(r => r.errorType === "ok").length}件（営業対象外）
+                      </summary>
+                      {sorted.filter(r => r.errorType === "ok").map(r => (
+                        <div key={r.id} style={{ fontSize: 12, color: text2, padding: "4px 8px" }}>
+                          ✅ {r.name} — {r.url}
+                        </div>
+                      ))}
+                    </details>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         )}
 
