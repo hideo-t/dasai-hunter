@@ -260,6 +260,11 @@ function DasaiHunterSFA() {
   const [jaspaLimit, setJaspaLimit] = useState(20); // テスト用上限（0=全件）
   const [jaspaCachedMembers, setJaspaCachedMembers] = useState({}); // ken→members キャッシュ
 
+  // ── リビルトパイプライン用 ──
+  const [rebuildModal, setRebuildModal] = useState(null); // {lead, data, html, template}
+  const [rebuildBuilding, setRebuildBuilding] = useState({}); // leadId→boolean
+  const [rebuildTemplate, setRebuildTemplate] = useState(0); // 0/1/2
+
   // Load from storage
   useEffect(() => {
     (async () => {
@@ -1425,6 +1430,366 @@ JSON配列のみ返すこと（説明文不要）:
   };
 
   // nosite_none 工場を通常ハントに送る
+  // ══════════════════════════════════════════════
+  //  リビルトパイプライン
+  // ══════════════════════════════════════════════
+
+  // localStorage保存キー
+  const rebuildKey = (id) => `dasai-rebuild-${id}`;
+
+  // 保存済みリビルトデータを取得
+  const loadRebuild = (id) => {
+    try { return JSON.parse(localStorage.getItem(rebuildKey(id)) || 'null'); } catch { return null; }
+  };
+
+  // リビルトデータを保存
+  const saveRebuild = (id, data) => {
+    try { localStorage.setItem(rebuildKey(id), JSON.stringify(data)); } catch {}
+  };
+
+  // ── テンプレート生成（3種）──
+  const REBUILD_TEMPLATES = [
+    {
+      name: "シンプル・モダン",
+      desc: "1ページ完結。スマホ対応。信頼感重視。",
+      icon: "🏠",
+      generate: (d) => `<!DOCTYPE html>
+<html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${d.name} | 自動車整備</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Helvetica Neue',sans-serif;color:#1a1a2e;background:#fff}
+header{background:#1a1a2e;color:#fff;padding:20px 24px;display:flex;justify-content:space-between;align-items:center}
+header h1{font-size:22px;font-weight:900}
+header a{color:#f97316;font-weight:700;font-size:18px;text-decoration:none}
+.hero{background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;padding:60px 24px;text-align:center}
+.hero h2{font-size:32px;font-weight:900;line-height:1.3;margin-bottom:12px}
+.hero p{font-size:16px;opacity:.8;margin-bottom:28px}
+.btn{display:inline-block;background:#f97316;color:#fff;padding:14px 36px;border-radius:50px;font-size:18px;font-weight:900;text-decoration:none}
+.section{padding:48px 24px;max-width:800px;margin:0 auto}
+.section h3{font-size:22px;font-weight:900;border-left:5px solid #f97316;padding-left:12px;margin-bottom:20px}
+.services{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:32px}
+.service-item{background:#f8f9fa;border-radius:12px;padding:20px;text-align:center;border-top:4px solid #f97316}
+.service-item .icon{font-size:32px;margin-bottom:8px}
+.service-item p{font-size:14px;font-weight:700;color:#1a1a2e}
+.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.info-item{background:#f8f9fa;border-radius:12px;padding:20px}
+.info-item h4{font-size:12px;color:#666;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px}
+.info-item p{font-size:15px;font-weight:700}
+.cta{background:#1a1a2e;color:#fff;padding:48px 24px;text-align:center}
+.cta h3{font-size:24px;font-weight:900;margin-bottom:16px}
+.cta a{display:inline-block;background:#f97316;color:#fff;padding:16px 48px;border-radius:50px;font-size:20px;font-weight:900;text-decoration:none}
+footer{background:#0d0d1a;color:#666;padding:20px 24px;text-align:center;font-size:12px}
+</style></head><body>
+<header><h1>${d.name}</h1><a href="tel:${d.phone}">${d.phone}</a></header>
+<div class="hero">
+  <h2>${d.catchcopy || 'お車のことは<br>なんでもご相談ください'}</h2>
+  <p>${d.description || '地域密着の自動車整備工場。丁寧な対応と確かな技術でお客様をサポートします。'}</p>
+  <a class="btn" href="tel:${d.phone}">📞 今すぐ電話する</a>
+</div>
+<div class="section">
+  <h3>サービス内容</h3>
+  <div class="services">
+    ${(d.services||['車検','一般整備','板金・塗装','タイヤ交換']).map(s=>`<div class="service-item"><div class="icon">🔧</div><p>${s}</p></div>`).join('')}
+  </div>
+  <h3>基本情報</h3>
+  <div class="info-grid">
+    <div class="info-item"><h4>住所</h4><p>${d.address||'—'}</p></div>
+    <div class="info-item"><h4>電話</h4><p>${d.phone||'—'}</p></div>
+    <div class="info-item"><h4>営業時間</h4><p>${d.hours||'—'}</p></div>
+    <div class="info-item"><h4>定休日</h4><p>${d.holiday||'—'}</p></div>
+  </div>
+</div>
+<div class="cta">
+  <h3>まずはお気軽にご相談を</h3>
+  <a href="tel:${d.phone}">📞 ${d.phone}</a>
+</div>
+<footer>&copy; ${new Date().getFullYear()} ${d.name}</footer>
+</body></html>`,
+    },
+    {
+      name: "コンテンツ充実型",
+      desc: "強みアピール・料金表・スタッフ紹介対応。",
+      icon: "📋",
+      generate: (d) => `<!DOCTYPE html>
+<html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${d.name} | 車検・整備</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Helvetica Neue',sans-serif;color:#1e293b;background:#f8fafc}
+nav{background:#fff;border-bottom:3px solid #0ea5e9;padding:0 24px;display:flex;justify-content:space-between;align-items:center;height:64px;position:sticky;top:0;z-index:100}
+nav h1{font-size:20px;font-weight:900;color:#0ea5e9}
+nav .tel{font-size:20px;font-weight:900;color:#f97316}
+.hero{background:linear-gradient(135deg,#0f172a,#0ea5e9);color:#fff;padding:80px 24px;text-align:center}
+.hero h2{font-size:36px;font-weight:900;margin-bottom:16px;line-height:1.2}
+.hero .sub{font-size:16px;opacity:.9;margin-bottom:32px}
+.btn-primary{background:#f97316;color:#fff;padding:16px 40px;border-radius:50px;font-size:18px;font-weight:900;text-decoration:none;display:inline-block}
+.btn-secondary{background:transparent;color:#fff;border:2px solid #fff;padding:14px 32px;border-radius:50px;font-size:16px;font-weight:700;text-decoration:none;display:inline-block;margin-left:12px}
+.strengths{background:#fff;padding:56px 24px}
+.strengths .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:24px;max-width:900px;margin:32px auto 0}
+.strength-card{background:#f0f9ff;border-radius:16px;padding:28px;text-align:center;border-top:4px solid #0ea5e9}
+.strength-card .num{font-size:48px;font-weight:900;color:#0ea5e9;line-height:1}
+.strength-card h4{font-size:15px;font-weight:900;margin:8px 0 4px}
+.strength-card p{font-size:13px;color:#64748b}
+.services-section{padding:56px 24px;background:#f8fafc}
+.services-section h2{font-size:28px;font-weight:900;text-align:center;margin-bottom:32px}
+.service-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;max-width:900px;margin:0 auto}
+.service-card{background:#fff;border-radius:16px;padding:24px;box-shadow:0 2px 12px #0001;text-align:center}
+.service-card .icon{font-size:40px;margin-bottom:12px}
+.service-card h4{font-size:15px;font-weight:900;margin-bottom:6px}
+.service-card p{font-size:13px;color:#64748b}
+.price-section{background:#fff;padding:56px 24px}
+table{width:100%;max-width:700px;margin:24px auto;border-collapse:collapse}
+th{background:#0ea5e9;color:#fff;padding:12px 16px;text-align:left;font-size:14px}
+td{padding:12px 16px;border-bottom:1px solid #e2e8f0;font-size:14px}
+tr:nth-child(even) td{background:#f8fafc}
+.info-section{background:#0f172a;color:#fff;padding:56px 24px}
+.info-section h2{font-size:28px;font-weight:900;text-align:center;margin-bottom:32px;color:#0ea5e9}
+.info-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:20px;max-width:900px;margin:0 auto 40px}
+.info-card{background:#1e293b;border-radius:12px;padding:20px}
+.info-card h4{font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
+.info-card p{font-size:16px;font-weight:700}
+.cta-box{text-align:center}
+.cta-box a{display:inline-block;background:#f97316;color:#fff;padding:20px 56px;border-radius:50px;font-size:22px;font-weight:900;text-decoration:none}
+footer{background:#0a0f1e;color:#475569;padding:20px;text-align:center;font-size:12px}
+h2.section-title{font-size:28px;font-weight:900;text-align:center;margin-bottom:8px}
+.section-sub{text-align:center;color:#64748b;margin-bottom:32px;font-size:14px}
+</style></head><body>
+<nav><h1>${d.name}</h1><span class="tel">☎ ${d.phone}</span></nav>
+<div class="hero">
+  <h2>${d.catchcopy || '地域No.1の<br>自動車整備工場'}</h2>
+  <div class="sub">${d.description || '確かな技術と丁寧な接客。お客様の大切なお車をお預かりします。'}</div>
+  <a class="btn-primary" href="tel:${d.phone}">今すぐ予約</a>
+  <a class="btn-secondary" href="#services">サービス詳細</a>
+</div>
+<div class="strengths">
+  <h2 class="section-title">選ばれる3つの理由</h2>
+  <div class="grid">
+    ${(d.strengths||['地域密着XX年の実績','国家資格整備士在籍','明朗会計・見積り無料']).map((s,i)=>`<div class="strength-card"><div class="num">0${i+1}</div><h4>${s}</h4><p>お客様に安心をお届けします</p></div>`).join('')}
+  </div>
+</div>
+<div class="services-section" id="services">
+  <h2 class="section-title">サービス</h2>
+  <div class="service-grid">
+    ${(d.services||['車検','法定点検','エンジン修理','板金・塗装','タイヤ交換','オイル交換']).map(s=>`<div class="service-card"><div class="icon">🔧</div><h4>${s}</h4><p>お気軽にお問い合わせください</p></div>`).join('')}
+  </div>
+</div>
+${d.prices && d.prices.length > 0 ? `<div class="price-section"><h2 class="section-title">料金の目安</h2><p class="section-sub">※車種・状態により異なります。詳細はお問い合わせください。</p><table><tr><th>項目</th><th>料金目安</th></tr>${d.prices.map(p=>`<tr><td>${p.name}</td><td>${p.price}</td></tr>`).join('')}</table></div>` : ''}
+<div class="info-section">
+  <h2>店舗情報</h2>
+  <div class="info-grid">
+    <div class="info-card"><h4>住所</h4><p>${d.address||'—'}</p></div>
+    <div class="info-card"><h4>電話番号</h4><p>${d.phone||'—'}</p></div>
+    <div class="info-card"><h4>営業時間</h4><p>${d.hours||'—'}</p></div>
+    <div class="info-card"><h4>定休日</h4><p>${d.holiday||'—'}</p></div>
+  </div>
+  <div class="cta-box"><a href="tel:${d.phone}">📞 ${d.phone} に電話する</a></div>
+</div>
+<footer>&copy; ${new Date().getFullYear()} ${d.name} All Rights Reserved.</footer>
+</body></html>`,
+    },
+    {
+      name: "LP型（CV重視）",
+      desc: "予約・問い合わせ獲得に特化。縦長1枚構成。",
+      icon: "🎯",
+      generate: (d) => `<!DOCTYPE html>
+<html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>【地域最安値挑戦中】${d.name}の車検・整備</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Helvetica Neue',sans-serif;color:#fff;background:#0a0a0a}
+.sticky-cta{position:fixed;bottom:0;left:0;right:0;background:#f97316;padding:16px;text-align:center;z-index:1000;box-shadow:0 -4px 20px #0008}
+.sticky-cta a{color:#fff;font-size:22px;font-weight:900;text-decoration:none}
+.hero{background:linear-gradient(180deg,#1a0a00,#2d1700);padding:80px 24px 100px;text-align:center;position:relative;overflow:hidden}
+.hero::before{content:'';position:absolute;inset:0;background:url("data:image/svg+xml,%3Csvg width='40' height='40' viewBox='0 0 40 40' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23f97316' fill-opacity='0.05'%3E%3Cpath d='M0 40L40 0H20L0 20M40 40V20L20 40'/%3E%3C/g%3E%3C/svg%3E")}
+.badge{display:inline-block;background:#f97316;color:#fff;font-size:13px;font-weight:900;padding:6px 16px;border-radius:50px;margin-bottom:16px;letter-spacing:1px}
+.hero h1{font-size:40px;font-weight:900;line-height:1.2;margin-bottom:16px}
+.hero h1 span{color:#f97316}
+.hero p{font-size:16px;opacity:.8;margin-bottom:32px}
+.hero-cta{display:inline-block;background:#f97316;color:#fff;font-size:24px;font-weight:900;padding:20px 56px;border-radius:50px;text-decoration:none;box-shadow:0 8px 32px #f9731688;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.04)}}
+.trust{background:#111;padding:32px 24px;display:flex;justify-content:center;gap:32px;flex-wrap:wrap}
+.trust-item{text-align:center}
+.trust-item .num{font-size:36px;font-weight:900;color:#f97316}
+.trust-item .label{font-size:12px;color:#aaa}
+.problem{background:#1a0000;padding:56px 24px}
+.problem h2{font-size:26px;font-weight:900;text-align:center;color:#f97316;margin-bottom:24px}
+.problem-list{max-width:600px;margin:0 auto}
+.problem-item{background:#2d0000;border-left:4px solid #f97316;padding:16px 20px;margin-bottom:12px;border-radius:0 8px 8px 0;font-size:15px}
+.solution{padding:56px 24px;text-align:center;background:#0f1923}
+.solution h2{font-size:28px;font-weight:900;margin-bottom:8px}
+.solution .sub{color:#64748b;margin-bottom:32px}
+.sol-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;max-width:800px;margin:0 auto 40px}
+.sol-card{background:#1e293b;border-radius:16px;padding:24px;border-top:3px solid #f97316}
+.sol-card .icon{font-size:36px;margin-bottom:12px}
+.sol-card h4{font-size:15px;font-weight:900;margin-bottom:6px}
+.sol-card p{font-size:13px;color:#94a3b8}
+.voice{background:#0a0a0a;padding:56px 24px}
+.voice h2{font-size:26px;font-weight:900;text-align:center;margin-bottom:32px}
+.voice-card{background:#1e1e1e;border-radius:16px;padding:24px;margin-bottom:16px;max-width:700px;margin:0 auto 16px;border-left:4px solid #f97316}
+.voice-card .stars{color:#f97316;font-size:18px;margin-bottom:8px}
+.voice-card p{font-size:14px;line-height:1.7}
+.voice-card .name{font-size:12px;color:#666;margin-top:8px}
+.info{background:#0f172a;padding:56px 24px}
+.info h2{font-size:26px;font-weight:900;text-align:center;color:#f97316;margin-bottom:32px}
+.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:600px;margin:0 auto 40px}
+.info-item{background:#1e293b;border-radius:12px;padding:20px}
+.info-item h4{font-size:11px;color:#94a3b8;margin-bottom:6px;text-transform:uppercase}
+.info-item p{font-size:16px;font-weight:700}
+.final-cta{background:linear-gradient(135deg,#f97316,#ea580c);padding:56px 24px;text-align:center}
+.final-cta h2{font-size:28px;font-weight:900;margin-bottom:8px}
+.final-cta p{margin-bottom:24px;opacity:.9}
+.final-cta a{display:inline-block;background:#fff;color:#f97316;font-size:24px;font-weight:900;padding:20px 56px;border-radius:50px;text-decoration:none}
+</style></head><body>
+<div class="sticky-cta"><a href="tel:${d.phone}">📞 ${d.phone}（今すぐ電話）</a></div>
+<div class="hero">
+  <div class="badge">✅ 地域密着・安心の整備工場</div>
+  <h1>${d.catchcopy ? d.catchcopy.replace(/\n/g,'<br>') : `<span>${d.name}</span>で<br>車のお悩み<span>解決！</span>`}</h1>
+  <p>${d.description || 'お電話1本で即日対応。見積り無料。'}</p>
+  <a class="hero-cta" href="tel:${d.phone}">📞 無料相談はこちら</a>
+</div>
+<div class="trust">
+  ${['地域密着', '安心保証', '即日対応', '見積無料'].map(t=>`<div class="trust-item"><div class="num">✓</div><div class="label">${t}</div></div>`).join('')}
+</div>
+<div class="problem">
+  <h2>こんなお悩みはありませんか？</h2>
+  <div class="problem-list">
+    ${['車検の時期が近づいてきた','最近エンジン音が気になる','どこの整備工場に頼めばいいか分からない','急なトラブルで困っている'].map(p=>`<div class="problem-item">❌ ${p}</div>`).join('')}
+  </div>
+</div>
+<div class="solution">
+  <h2>すべて${d.name}にお任せください</h2>
+  <div class="sub">丁寧な診断と確かな技術でお客様の安全を守ります</div>
+  <div class="sol-grid">
+    ${(d.services||['車検・点検','一般整備','板金・塗装','タイヤ交換']).map(s=>`<div class="sol-card"><div class="icon">🔧</div><h4>${s}</h4><p>お気軽にご相談ください</p></div>`).join('')}
+  </div>
+</div>
+<div class="info">
+  <h2>店舗情報</h2>
+  <div class="info-grid">
+    <div class="info-item"><h4>住所</h4><p>${d.address||'—'}</p></div>
+    <div class="info-item"><h4>電話</h4><p>${d.phone||'—'}</p></div>
+    <div class="info-item"><h4>営業時間</h4><p>${d.hours||'—'}</p></div>
+    <div class="info-item"><h4>定休日</h4><p>${d.holiday||'—'}</p></div>
+  </div>
+</div>
+<div class="final-cta">
+  <h2>まずはお気軽にご連絡ください</h2>
+  <p>見積り・相談は無料です。お気軽にどうぞ。</p>
+  <a href="tel:${d.phone}">📞 ${d.phone}</a>
+</div>
+</body></html>`,
+    },
+  ];
+
+  // ── サイトスクレイピング＋データ抽出 ──
+  const buildRebuildSite = async (lead) => {
+    if (!lead.url) { alert("URLがありません"); return; }
+    const analysisProv = aiProvider;
+    const analysisKey = aiApiKeys[analysisProv] || "";
+    if (!analysisKey) { alert("APIキーを設定してください（⚙️ボタン）"); return; }
+    const analysisModel = aiModel || AI_PROVIDERS[analysisProv].models[0];
+
+    setRebuildBuilding(prev => ({ ...prev, [lead.id]: true }));
+
+    try {
+      // Step1: CORSプロキシでHTMLを取得
+      let siteHtml = "";
+      const proxies = [
+        (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
+        (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+      ];
+      for (const proxy of proxies) {
+        try {
+          const resp = await fetch(proxy(lead.url), { signal: AbortSignal.timeout(10000) });
+          if (resp.ok) {
+            const buf = await resp.arrayBuffer();
+            try { siteHtml = new TextDecoder("utf-8", { fatal: true }).decode(buf); } catch {}
+            if (!siteHtml || siteHtml.length < 100) {
+              try { siteHtml = new TextDecoder("shift-jis").decode(buf); } catch {}
+            }
+            if (siteHtml && siteHtml.length > 100) break;
+          }
+        } catch {}
+      }
+
+      // スクリプト・CSS除去
+      const cleanHtml = siteHtml
+        .replace(/<script[\s\S]*?<\/script>/gi, "")
+        .replace(/<style[\s\S]*?<\/style>/gi, "")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .substring(0, 8000);
+
+      // Step2: DeepSeekでデータ構造化
+      const extractPrompt = `以下は自動車整備工場「${lead.name}」のサイトのテキストです。
+全情報をJSONで抽出してください。
+
+テキスト:
+${cleanHtml}
+
+JSONのみ返してください（説明文不要）:
+{
+  "name": "工場名（正式名称）",
+  "catchcopy": "キャッチコピーや一番目立つメッセージ（なければ空）",
+  "description": "説明文・概要（100字以内）",
+  "address": "住所",
+  "phone": "電話番号",
+  "hours": "営業時間",
+  "holiday": "定休日",
+  "services": ["サービス1","サービス2",...],
+  "strengths": ["強み1","強み2","強み3"],
+  "prices": [{"name":"車検（軽）","price":"¥38,000〜"},{"name":"オイル交換","price":"¥3,000〜"}],
+  "certifications": ["認証工場","JAF指定",...],
+  "established": "創業年（あれば）"
+}`;
+
+      const extractText = await callAI(analysisProv, analysisKey,
+        [{ role: "user", content: extractPrompt }],
+        { model: analysisModel, maxTokens: 2000 }
+      );
+
+      let extracted = {};
+      try {
+        const cleaned = extractText.replace(/```json\s*/g,"").replace(/```\s*/g,"").trim();
+        const m = cleaned.match(/\{[\s\S]*\}/);
+        if (m) extracted = JSON.parse(m[0]);
+      } catch {}
+
+      // フォールバック: leadのデータで補完
+      const data = {
+        name: extracted.name || lead.name,
+        catchcopy: extracted.catchcopy || "",
+        description: extracted.description || "",
+        address: extracted.address || lead.address || "",
+        phone: extracted.phone || lead.phone || "",
+        hours: extracted.hours || "",
+        holiday: extracted.holiday || "",
+        services: extracted.services || ["車検","一般整備","板金・塗装","タイヤ交換"],
+        strengths: extracted.strengths || ["地域密着の整備工場","確かな技術と丁寧な対応","明朗会計"],
+        prices: extracted.prices || [],
+        certifications: extracted.certifications || [],
+        established: extracted.established || "",
+        _url: lead.url,
+        _scrapedAt: new Date().toISOString(),
+      };
+
+      // テンプレート生成
+      const html = REBUILD_TEMPLATES[rebuildTemplate].generate(data);
+
+      // localStorage保存
+      saveRebuild(lead.id, { data, html, template: rebuildTemplate, generatedAt: new Date().toISOString() });
+
+      // モーダル表示
+      setRebuildModal({ lead, data, html, template: rebuildTemplate });
+
+    } catch(e) {
+      alert(`エラー: ${e.message}`);
+    }
+    setRebuildBuilding(prev => ({ ...prev, [lead.id]: false }));
+  };
+
   const sendToHunt = (ken) => {
     setRegion("__custom__");
     setCustomRegion(ken || jaspaRegion);
@@ -2098,26 +2463,50 @@ JSON配列のみ返すこと（説明文不要）:
                       <span style={{ fontSize: 12, fontWeight: 700, color: STATUS_COLORS[status] }}>{status}</span>
                       <span style={{ fontSize: 11, color: text2 }}>({items.length})</span>
                     </div>
-                    {items.map(l => (
+                    {items.map(l => {
+                      const hasRebuild = !!loadRebuild(l.id);
+                      const isBuilding = rebuildBuilding[l.id];
+                      return (
                       <div key={l.id}
-                        onClick={() => { setTab("leads"); setSelectedLead(l); setNextAction(l.nextAction || ""); setNextDate(l.nextDate || ""); }}
                         style={{
                           background: "#0a0a14", borderRadius: 6, padding: 8, marginBottom: 6,
-                          cursor: "pointer", borderLeft: `3px solid ${STATUS_COLORS[status]}`,
+                          borderLeft: `3px solid ${STATUS_COLORS[status]}`,
                         }}>
-                        <div style={{ fontSize: 12, fontWeight: 700 }}>{l.name}</div>
-                        <div style={{ fontSize: 10, color: text2 }}>{l.region}</div>
-                        <div style={{ fontSize: 9, color: (l.cmsRisk != null ? l.cmsRisk : 3) >= 4 ? "#ef4444" : text2, marginTop: 1 }}>
-                          {(l.cmsRisk != null ? l.cmsRisk : 3) >= 4 ? "☠️" : "🔧"} {l.cms || "不明"}
+                        <div onClick={() => { setTab("leads"); setSelectedLead(l); setNextAction(l.nextAction || ""); setNextDate(l.nextDate || ""); }}
+                          style={{ cursor: "pointer" }}>
+                          <div style={{ fontSize: 12, fontWeight: 700 }}>{l.name}</div>
+                          <div style={{ fontSize: 10, color: text2 }}>{l.region}</div>
+                          <div style={{ fontSize: 9, color: (l.cmsRisk != null ? l.cmsRisk : 3) >= 4 ? "#ef4444" : text2, marginTop: 1 }}>
+                            {(l.cmsRisk != null ? l.cmsRisk : 3) >= 4 ? "☠️" : "🔧"} {l.cms || "不明"}
+                          </div>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 2 }}>
+                            <span style={{ fontSize: 11, fontWeight: 900, color: l.dasaiScore >= 70 ? accent : "#f59e0b" }}>
+                              ダサさ {l.dasaiScore}
+                            </span>
+                            <span style={{ fontSize: 10 }}>{l.approach === "守り" ? "🛡️" : "⚔️"}</span>
+                          </div>
                         </div>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 2 }}>
-                          <span style={{ fontSize: 11, fontWeight: 900, color: l.dasaiScore >= 70 ? accent : "#f59e0b" }}>
-                            ダサさ {l.dasaiScore}
-                          </span>
-                          <span style={{ fontSize: 10 }}>{l.approach === "守り" ? "🛡️" : "⚔️"}</span>
-                        </div>
+                        {/* 改善サイト構築ボタン */}
+                        {l.url && (
+                          <div style={{ display: "flex", gap: 4, marginTop: 6 }}>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); buildRebuildSite(l); }}
+                              disabled={isBuilding}
+                              style={{ flex: 1, background: hasRebuild ? "#065f4622" : "#c2410c22", color: hasRebuild ? "#10b981" : "#f97316", border: `1px solid ${hasRebuild ? "#10b98144" : "#c2410c44"}`, borderRadius: 4, padding: "5px 4px", fontSize: 10, fontWeight: 900, cursor: "pointer", opacity: isBuilding ? 0.6 : 1 }}>
+                              {isBuilding ? "🔄 生成中..." : hasRebuild ? "✅ 仮サイト確認" : "🔨 改善サイト構築"}
+                            </button>
+                            {hasRebuild && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); const r = loadRebuild(l.id); if(r) setRebuildModal({ lead: l, ...r }); }}
+                                style={{ background: "#3b82f622", color: "#3b82f6", border: "1px solid #3b82f644", borderRadius: 4, padding: "5px 8px", fontSize: 10, cursor: "pointer" }}>
+                                👁
+                              </button>
+                            )}
+                          </div>
+                        )}
                       </div>
-                    ))}
+                      );
+                    })}
                     {items.length === 0 && <div style={{ fontSize: 11, color: text2, textAlign: "center", padding: 10 }}>—</div>}
                   </div>
                 );
@@ -2918,6 +3307,111 @@ JSON配列のみ返すこと（説明文不要）:
         )}
 
       </div>
+
+      {/* ══ リビルトプレビューモーダル ══ */}
+      {rebuildModal && (
+        <div style={{ position: "fixed", inset: 0, background: "#000c", zIndex: 9000, display: "flex", flexDirection: "column" }}
+          onClick={() => setRebuildModal(null)}>
+          <div style={{ background: "#0f1117", borderBottom: "1px solid #1e1e3a", padding: "12px 20px", display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}
+            onClick={e => e.stopPropagation()}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 15, fontWeight: 900, color: "#fff" }}>🔨 仮サイトプレビュー — {rebuildModal.lead.name}</div>
+              <div style={{ fontSize: 11, color: "#6b7280", marginTop: 2 }}>
+                データ取得元: {rebuildModal.lead.url} | 生成: {rebuildModal.generatedAt ? new Date(rebuildModal.generatedAt).toLocaleString("ja-JP") : "—"}
+              </div>
+            </div>
+            {/* テンプレート切り替え */}
+            <div style={{ display: "flex", gap: 6 }}>
+              {REBUILD_TEMPLATES.map((t, i) => (
+                <button key={i}
+                  onClick={() => {
+                    const newHtml = REBUILD_TEMPLATES[i].generate(rebuildModal.data);
+                    const newRebuild = { ...rebuildModal, html: newHtml, template: i };
+                    saveRebuild(rebuildModal.lead.id, { data: rebuildModal.data, html: newHtml, template: i, generatedAt: rebuildModal.generatedAt });
+                    setRebuildModal(newRebuild);
+                    setRebuildTemplate(i);
+                  }}
+                  style={{ background: rebuildModal.template === i ? "#c2410c" : "#1e1e3a", color: rebuildModal.template === i ? "#fff" : "#9ca3af", border: `1px solid ${rebuildModal.template === i ? "#c2410c" : "#374151"}`, borderRadius: 6, padding: "6px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                  {t.icon} {t.name}
+                </button>
+              ))}
+            </div>
+            {/* HTMLダウンロード */}
+            <button
+              onClick={() => {
+                const blob = new Blob([rebuildModal.html], { type: "text/html;charset=utf-8" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `${rebuildModal.lead.name.replace(/[^a-zA-Z0-9\u3000-\u9fff]/g,'_')}_rebuild.html`;
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+              style={{ background: "#10b98122", color: "#10b981", border: "1px solid #10b98144", borderRadius: 6, padding: "8px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+              ⬇️ HTML保存
+            </button>
+            <button onClick={() => setRebuildModal(null)}
+              style={{ background: "#1e1e3a", color: "#9ca3af", border: "1px solid #374151", borderRadius: 6, padding: "8px 16px", fontSize: 12, cursor: "pointer" }}>
+              ✕ 閉じる
+            </button>
+          </div>
+
+          {/* データ確認パネル + プレビュー */}
+          <div style={{ display: "flex", flex: 1, overflow: "hidden" }} onClick={e => e.stopPropagation()}>
+            {/* 左：抽出データ */}
+            <div style={{ width: 280, background: "#0a0a14", borderRight: "1px solid #1e1e3a", padding: 16, overflowY: "auto", flexShrink: 0 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#f97316", marginBottom: 12 }}>📊 抽出データ</div>
+              {[
+                ["工場名", rebuildModal.data.name],
+                ["電話", rebuildModal.data.phone],
+                ["住所", rebuildModal.data.address],
+                ["営業時間", rebuildModal.data.hours],
+                ["定休日", rebuildModal.data.holiday],
+                ["キャッチコピー", rebuildModal.data.catchcopy],
+                ["説明", rebuildModal.data.description],
+                ["創業", rebuildModal.data.established],
+              ].map(([k, v]) => v ? (
+                <div key={k} style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 9, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1 }}>{k}</div>
+                  <div style={{ fontSize: 12, color: "#e5e7eb", marginTop: 2 }}>{v}</div>
+                </div>
+              ) : null)}
+              {rebuildModal.data.services?.length > 0 && (
+                <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 9, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1 }}>サービス</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
+                    {rebuildModal.data.services.map(s => (
+                      <span key={s} style={{ fontSize: 10, background: "#1e293b", color: "#94a3b8", border: "1px solid #334155", borderRadius: 4, padding: "2px 6px" }}>{s}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {rebuildModal.data.strengths?.length > 0 && (
+                <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 9, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1 }}>強み</div>
+                  {rebuildModal.data.strengths.map(s => (
+                    <div key={s} style={{ fontSize: 11, color: "#e5e7eb", marginTop: 4 }}>✓ {s}</div>
+                  ))}
+                </div>
+              )}
+              {rebuildModal.data.prices?.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 9, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1 }}>料金</div>
+                  {rebuildModal.data.prices.map(p => (
+                    <div key={p.name} style={{ fontSize: 11, color: "#e5e7eb", marginTop: 4 }}>{p.name}: {p.price}</div>
+                  ))}
+                </div>
+              )}
+            </div>
+            {/* 右：iframeプレビュー */}
+            <iframe
+              srcDoc={rebuildModal.html}
+              style={{ flex: 1, border: "none" }}
+              title="rebuild-preview"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
