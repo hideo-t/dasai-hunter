@@ -171,6 +171,8 @@ function DasaiHunterSFA() {
   const [scanHistory, setScanHistory] = useState([]); // 蓄積データ
   const [landlordChecks, setLandlordChecks] = useState({}); // 地主チェック結果 id→result
   const [landlordChecking, setLandlordChecking] = useState({}); // id→boolean
+  const [certChecks, setCertChecks] = useState({}); // 認証チェック結果 id→result
+  const [certChecking, setCertChecking] = useState(false); // 一括チェック中
 
   // Load from storage
   useEffect(() => {
@@ -524,6 +526,61 @@ approach: "攻め"=集客課題, "守り"=採用課題
     setHuntPhase("");
   };
 
+  // ── 認証工場チェック（自動車整備のみ）──
+  const checkCertifications = async (results) => {
+    const sm = SEARCH_MODELS[searchModel];
+    const searchKey = aiApiKeys[sm.needsKey] || "";
+    if (!searchKey) { alert("APIキーを設定してください（⚙️ボタン）"); return; }
+
+    setCertChecking(true);
+    try {
+      const shopNames = results.map(r => r.name).join("、");
+      const prompt = `沖縄県自動車整備振興会・商工組合の認証工場リストを https://www.jaspa-okinawa.or.jp/m/ から取得してください。
+
+以下の整備工場が認証工場リストに掲載されているか照合してください：
+${results.map((r, i) => `${i+1}. ${r.name}（TEL: ${r.phone || "不明"}）`).join("\n")}
+
+照合方法：
+- 社名の完全一致または部分一致（例：「西自動車商会」が「有限会社西自動車商会」にマッチ）
+- 電話番号が一致する場合も採用
+- 認証番号・認証種別（指定工場/認証工場）も取得してください
+
+JSON配列のみ返すこと（説明文不要）:
+[{"name":"照合した店名","isCertified":true/false,"certType":"指定工場/認証工場/なし","jaspaName":"リスト上の正式名称","certNo":"認証番号（あれば）"}]`;
+
+      const text = await callAI(sm.provider, searchKey,
+        [{ role: "user", content: prompt }],
+        { model: sm.model, useWebSearch: true, maxTokens: 3000 }
+      );
+
+      const parsed = (() => {
+        try {
+          const cleaned = text.replace(/```json\s*/g,"").replace(/```\s*/g,"").trim();
+          const m = cleaned.match(/\[[\s\S]*\]/);
+          return m ? JSON.parse(m[0]) : [];
+        } catch { return []; }
+      })();
+
+      // 結果をid→resultにマッピング
+      const newChecks = {};
+      results.forEach(r => {
+        const found = parsed.find(p =>
+          p.name && (
+            r.name.includes(p.name) || p.name.includes(r.name) ||
+            p.jaspaName && (r.name.includes(p.jaspaName) || p.jaspaName.includes(r.name))
+          )
+        );
+        newChecks[r.id] = found
+          ? { isCertified: found.isCertified, certType: found.certType || "不明", jaspaName: found.jaspaName || "", certNo: found.certNo || "" }
+          : { isCertified: false, certType: "未確認", jaspaName: "", certNo: "" };
+      });
+      setCertChecks(newChecks);
+    } catch(e) {
+      alert(`認証チェックエラー: ${e.message}`);
+    }
+    setCertChecking(false);
+  };
+
   // ── 地主チェック ──
   const checkLandlord = async (r) => {
     const sm = SEARCH_MODELS[searchModel];
@@ -859,8 +916,29 @@ approach: "攻め"=集客課題, "守り"=採用課題
 
             {huntResults.length > 0 && (
               <div>
-                <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12, color: text2 }}>
-                  🎯 {huntResults.length}件のターゲット発見
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: text2 }}>
+                    🎯 {huntResults.length}件のターゲット発見
+                  </div>
+                  {/* 自動車整備の場合のみ認証チェックボタン表示 */}
+                  {(customIndustry || industry).includes("自動車整備") && (
+                    <button
+                      onClick={() => checkCertifications(huntResults)}
+                      disabled={certChecking}
+                      style={{
+                        background: certChecking ? "#1a1a2e" : "#10b98118",
+                        border: "1px solid #10b98144", borderRadius: 8,
+                        color: "#10b981", padding: "8px 16px", fontSize: 12, fontWeight: 700,
+                        cursor: certChecking ? "not-allowed" : "pointer",
+                        display: "flex", alignItems: "center", gap: 6,
+                        opacity: certChecking ? 0.7 : 1,
+                      }}>
+                      {certChecking
+                        ? <><span style={{ animation: "pulse 1s infinite", display:"inline-block" }}>🔍</span> jaspa照合中...</>
+                        : <><span>🔧</span> 民間車検・認証工場を一括チェック</>
+                      }
+                    </button>
+                  )}
                 </div>
                 {[...huntResults].sort((a, b) => b.dasaiScore - a.dasaiScore).map(r => (
                   <div key={r.id} style={{
@@ -869,7 +947,33 @@ approach: "攻め"=集客課題, "守り"=採用課題
                   }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
                       <div>
-                        <div style={{ fontSize: 15, fontWeight: 700 }}>{r.name}</div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                          <div style={{ fontSize: 15, fontWeight: 700 }}>{r.name}</div>
+                          {/* 認証バッジ */}
+                          {certChecks[r.id] && (() => {
+                            const cc = certChecks[r.id];
+                            if (cc.isCertified) {
+                              const isShitei = cc.certType && cc.certType.includes("指定");
+                              const color = isShitei ? "#a78bfa" : "#10b981";
+                              const bg = isShitei ? "#a78bfa15" : "#10b98115";
+                              const bd = isShitei ? "#a78bfa44" : "#10b98144";
+                              return (
+                                <span style={{ fontSize: 11, fontWeight: 700, background: bg, color, border: `1px solid ${bd}`, borderRadius: 4, padding: "2px 8px" }}>
+                                  {isShitei ? "🏆 指定工場" : "✅ 認証工場"}
+                                  {cc.certNo && <span style={{ opacity: 0.7, marginLeft: 4 }}>#{cc.certNo}</span>}
+                                </span>
+                              );
+                            } else if (cc.certType === "未確認") {
+                              return null;
+                            } else {
+                              return (
+                                <span style={{ fontSize: 11, fontWeight: 700, background: "#6b728018", color: "#6b7280", border: "1px solid #6b728033", borderRadius: 4, padding: "2px 8px" }}>
+                                  ❌ 認証なし
+                                </span>
+                              );
+                            }
+                          })()}
+                        </div>
                         <a href={r.url} target="_blank" rel="noopener" style={{ fontSize: 12, color: "#6699cc", textDecoration: "none" }}>{r.url}</a>
                         {r.phone && <div style={{ fontSize: 12, color: text2, marginTop: 2 }}>📞 {r.phone}</div>}
                       </div>
