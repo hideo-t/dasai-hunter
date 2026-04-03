@@ -1938,6 +1938,108 @@ JSON配列のみ返すこと（説明文不要）:
                     {okHighScore.length > 0 && <span style={{ color: "#f59e0b" }}> / 正常だが要注目: {okHighScore.length}件</span>}
                   </div>
 
+                  {/* ── 処理フロー内訳（分母確認）── */}
+                  {(() => {
+                    // siteSource が無い場合の fallback 推定
+                    const getBucket = (r) => {
+                      if (r.siteSource) return r.siteSource;
+                      if (r.errorType === "kakari") return "portal";
+                      if (r.errorType === "nosite_none") return "none";
+                      return (r.url && r.url.trim()) ? "official" : "none";
+                    };
+                    const total = jaspaResults.length;
+                    const official  = jaspaResults.filter(r => getBucket(r) === "official");
+                    const gmapRes   = jaspaResults.filter(r => getBucket(r) === "googlemap");
+                    const portalRes = jaspaResults.filter(r => getBucket(r) === "portal");
+                    const noneRes   = jaspaResults.filter(r => getBucket(r) === "none");
+                    const noUrlTotal = gmapRes.length + portalRes.length + noneRes.length;
+
+                    const okOff  = official.filter(r => r.errorType === "ok").length;
+                    const badOff = official.filter(r => r.errorType === "content_bad").length;
+                    const connOff = okOff + badOff;
+                    const errOff  = official.length - connOff;
+                    const sslC = official.filter(r => r.errorType === "ssl").length;
+                    const dnsC = official.filter(r => r.errorType === "dns").length;
+                    const nfC  = official.filter(r => r.errorType === "notfound").length;
+
+                    const okGm  = gmapRes.filter(r => r.errorType === "ok").length;
+                    const badGm = gmapRes.filter(r => r.errorType === "content_bad").length;
+                    const noMaps = portalRes.length + noneRes.length;
+
+                    const pct = (n, d) => d > 0 ? `${Math.round(n/d*100)}%` : "—";
+                    const totalCheck = official.length + noUrlTotal;
+                    const hasSiteSource = jaspaResults.some(r => r.siteSource);
+
+                    const R = ({lv, icon, label, n, d, col}) => (
+                      <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:3, paddingLeft: lv*18, fontSize:12 }}>
+                        <span style={{ color:"#374151", fontFamily:"monospace", fontSize:11, flexShrink:0 }}>{"└─"}</span>
+                        {icon && <span style={{ fontSize:13 }}>{icon}</span>}
+                        <span style={{ color: col || text2, flex:1 }}>{label}</span>
+                        <span style={{ fontWeight:900, color: col || "#c0c0d0", minWidth:36, textAlign:"right" }}>{n}件</span>
+                        {d > 0 && <span style={{ color:"#6b7280", fontSize:10, minWidth:32, textAlign:"right" }}>{pct(n,d)}</span>}
+                      </div>
+                    );
+
+                    return (
+                      <details style={{ marginBottom:16, background:"#060612", borderRadius:8, padding:"10px 14px", border:`1px solid ${border}` }}>
+                        <summary style={{ fontSize:12, fontWeight:700, color:"#9090bb", cursor:"pointer", display:"flex", alignItems:"center", gap:8 }}>
+                          <span>📊 処理フロー内訳（分母確認）</span>
+                          <span style={{ color:"#fff", fontWeight:900 }}>総計 {total}件</span>
+                          {!hasSiteSource && <span style={{ color:"#f59e0b", fontSize:10, fontWeight:400 }}>※ siteSource未設定 — 推定値</span>}
+                        </summary>
+                        <div style={{ marginTop:12 }}>
+
+                          {/* URL有り */}
+                          <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:3, fontSize:12 }}>
+                            <span style={{ color:"#6699cc", fontWeight:700 }}>├─ 🔗 URL記載あり</span>
+                            <span style={{ fontWeight:900, color:"#6699cc" }}>{official.length}件</span>
+                            <span style={{ color:"#6b7280", fontSize:10 }}>{pct(official.length, total)}</span>
+                          </div>
+                          {official.length > 0 && <>
+                            <R lv={1} label="接続成功" n={connOff} d={official.length} col="#a0a0c0"/>
+                            <R lv={2} icon="✅" label="有益（ok）" n={okOff} d={connOff} col="#10b981"/>
+                            <R lv={2} icon="⚠️" label="表示異常（content_bad）" n={badOff} d={connOff} col="#eab308"/>
+                            {errOff > 0 && <>
+                              <R lv={1} label="接続不能" n={errOff} d={official.length} col="#a0a0c0"/>
+                              {sslC > 0 && <R lv={2} icon="🔴" label="SSL失効" n={sslC} d={errOff} col="#ef4444"/>}
+                              {dnsC > 0 && <R lv={2} icon="💀" label="ドメイン消滅" n={dnsC} d={errOff} col="#7c3aed"/>}
+                              {nfC  > 0 && <R lv={2} icon="🟠" label="404エラー" n={nfC} d={errOff} col="#f97316"/>}
+                            </>}
+                          </>}
+
+                          {/* URL無し */}
+                          <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:3, marginTop:6, fontSize:12 }}>
+                            <span style={{ color:"#a78bfa", fontWeight:700 }}>└─ 🔍 URL記載なし</span>
+                            <span style={{ fontWeight:900, color:"#a78bfa" }}>{noUrlTotal}件</span>
+                            <span style={{ color:"#6b7280", fontSize:10 }}>{pct(noUrlTotal, total)}</span>
+                          </div>
+                          {noUrlTotal > 0 && <>
+                            <R lv={1} label="Google Maps 発見" n={gmapRes.length} d={noUrlTotal} col="#a0a0c0"/>
+                            {gmapRes.length > 0 && <>
+                              <R lv={2} icon="✅" label="有益（ok）" n={okGm} d={gmapRes.length} col="#10b981"/>
+                              <R lv={2} icon="⚠️" label="表示異常（content_bad）" n={badGm} d={gmapRes.length} col="#eab308"/>
+                            </>}
+                            <R lv={1} label="Google Maps 未発見" n={noMaps} d={noUrlTotal} col="#a0a0c0"/>
+                            {noMaps > 0 && <>
+                              <R lv={2} icon="🏚️" label="間借りサイト（kakari）" n={portalRes.length} d={noMaps} col="#a78bfa"/>
+                              <R lv={2} icon="🚫" label="完全デジタル不在（nosite_none）" n={noneRes.length} d={noMaps} col="#9ca3af"/>
+                            </>}
+                          </>}
+
+                          {/* 合計検証 */}
+                          <div style={{ marginTop:10, paddingTop:8, borderTop:`1px solid #1e1e3a`, fontSize:11, display:"flex", alignItems:"center", gap:8 }}>
+                            <span style={{ color:"#6b7280" }}>合計検証:</span>
+                            <span style={{ color:"#9090bb" }}>URL有り {official.length} + URL無し {noUrlTotal} = {totalCheck}件</span>
+                            {totalCheck !== total
+                              ? <span style={{ color:accent }}>⚠️ 総計({total})と{total-totalCheck > 0 ? "+" : ""}{total-totalCheck}件ズレ（siteSource未返却あり）</span>
+                              : <span style={{ color:"#10b981" }}>✅ 総計一致</span>
+                            }
+                          </div>
+                        </div>
+                      </details>
+                    );
+                  })()}
+
                   {sorted.filter(r => r.errorType !== "ok").map(r => {
                     const et = ERROR_TYPES[r.errorType] || ERROR_TYPES.nosite_none;
                     const alreadyAdded = leads.find(l => l.phone === r.phone && r.phone);
