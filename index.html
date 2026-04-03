@@ -169,6 +169,8 @@ function DasaiHunterSFA() {
   const [searchModel, setSearchModel] = useState(0); // index into SEARCH_MODELS
   const [showSettings, setShowSettings] = useState(false);
   const [scanHistory, setScanHistory] = useState([]); // 蓄積データ
+  const [landlordChecks, setLandlordChecks] = useState({}); // 地主チェック結果 id→result
+  const [landlordChecking, setLandlordChecking] = useState({}); // id→boolean
 
   // Load from storage
   useEffect(() => {
@@ -431,6 +433,55 @@ approach: "攻め"=集客課題, "守り"=採用課題
     }
     setHunting(false);
     setHuntPhase("");
+  };
+
+  // ── 地主チェック ──
+  const checkLandlord = async (r) => {
+    const sm = SEARCH_MODELS[searchModel];
+    const searchKey = aiApiKeys[sm.needsKey] || "";
+    if (!searchKey) { alert("APIキーを設定してください（⚙️ボタン）"); return; }
+
+    setLandlordChecking(prev => ({ ...prev, [r.id]: true }));
+
+    try {
+      const shopName = r.name || "";
+      // 名称からキーワードを抽出（例：「仲地自動車整備工場」→「仲地」）
+      const nameKeyword = shopName.replace(/自動車整備工場|整備工場|美容院|美容室|歯科|医院|クリニック|薬局|整骨院|整体院|工務店|不動産|株式会社|有限会社|合資会社/g, "").trim().slice(0, 8);
+
+      const prompt = `以下の事業者について、Googleマップや住所情報を調べてください。
+
+事業者名: ${shopName}
+電話番号: ${r.phone || "不明"}
+地域: ${r.address || ""}
+
+【調査内容】
+1. この事業者の正確な住所（番地まで）をGoogleマップで検索
+2. 同じ住所・同じ地番に「${nameKeyword}」を含むマンション・ビル・アパート・不動産が存在するか
+3. 事業者名の一部（「${nameKeyword}」）と同名の建物・不動産物件があるか
+
+【返答形式】JSONのみ。説明文不要。
+{"isLandlord": true/false, "confidence": "高/中/低", "buildingName": "発見した建物名（なければ空文字）", "address": "住所", "reason": "判断理由（1行）"}
+
+同名建物が見つかれば isLandlord: true。見つからなければ false。`;
+
+      const text = await callAI(sm.provider, searchKey,
+        [{ role: "user", content: prompt }],
+        { model: sm.model, useWebSearch: true, maxTokens: 1000 }
+      );
+
+      // JSON抽出
+      let result = { isLandlord: false, confidence: "低", buildingName: "", address: "", reason: "情報なし" };
+      try {
+        const cleaned = text.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+        const m = cleaned.match(/\{[\s\S]*\}/);
+        if (m) result = { ...result, ...JSON.parse(m[0]) };
+      } catch {}
+
+      setLandlordChecks(prev => ({ ...prev, [r.id]: result }));
+    } catch (e) {
+      setLandlordChecks(prev => ({ ...prev, [r.id]: { isLandlord: false, confidence: "低", buildingName: "", address: "", reason: `エラー: ${e.message}` } }));
+    }
+    setLandlordChecking(prev => ({ ...prev, [r.id]: false }));
   };
 
   const calcDasai = (scores) => {
@@ -776,6 +827,57 @@ approach: "攻め"=集客課題, "守り"=採用課題
                         💡 {r.opportunity}
                       </div>
                     )}
+
+                    {/* 地主チェック */}
+                    <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      {!landlordChecks[r.id] && (
+                        <button
+                          onClick={() => checkLandlord(r)}
+                          disabled={landlordChecking[r.id]}
+                          style={{
+                            background: "transparent", border: "1px solid #a78bfa44", borderRadius: 6,
+                            color: "#a78bfa", padding: "5px 14px", fontSize: 12, fontWeight: 700,
+                            cursor: landlordChecking[r.id] ? "not-allowed" : "pointer",
+                            opacity: landlordChecking[r.id] ? 0.6 : 1,
+                          }}>
+                          {landlordChecking[r.id] ? "🔍 地主チェック中..." : "🏠 地主チェック"}
+                        </button>
+                      )}
+                      {landlordChecks[r.id] && (() => {
+                        const lc = landlordChecks[r.id];
+                        const isLandlord = lc.isLandlord;
+                        const color = isLandlord ? "#f97316" : "#10b981";
+                        const bg = isLandlord ? "#f9731615" : "#10b98115";
+                        const bdColor = isLandlord ? "#f9731633" : "#10b98133";
+                        return (
+                          <div style={{ width: "100%", borderRadius: 8, border: `1px solid ${bdColor}`, background: bg, padding: "8px 12px" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: lc.reason ? 4 : 0 }}>
+                              <span style={{ fontSize: 16 }}>{isLandlord ? "🏢" : "✅"}</span>
+                              <span style={{ fontSize: 13, fontWeight: 900, color }}>
+                                {isLandlord
+                                  ? `地主可能性あり（確度: ${lc.confidence}）`
+                                  : "地主の可能性は低い"}
+                              </span>
+                              {isLandlord && lc.buildingName && (
+                                <span style={{ fontSize: 11, background: "#f9731622", color: "#f97316", border: "1px solid #f9731644", borderRadius: 4, padding: "2px 8px" }}>
+                                  📌 {lc.buildingName}
+                                </span>
+                              )}
+                              <button
+                                onClick={() => {
+                                  setLandlordChecks(prev => { const n = {...prev}; delete n[r.id]; return n; });
+                                }}
+                                style={{ marginLeft: "auto", background: "none", border: "none", color: "#666", cursor: "pointer", fontSize: 14 }}>
+                                ↺
+                              </button>
+                            </div>
+                            {lc.address && <div style={{ fontSize: 11, color: "#aaa", marginBottom: 2 }}>📍 {lc.address}</div>}
+                            {lc.reason && <div style={{ fontSize: 11, color: "#aaa" }}>{lc.reason}</div>}
+                          </div>
+                        );
+                      })()}
+                    </div>
+
                   </div>
                 ))}
               </div>
