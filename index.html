@@ -1367,6 +1367,52 @@ JSON配列のみ返すこと（説明文不要）:
     return totalW > 0 ? Math.round(total / totalW) : 60;
   };
 
+  // ── ターゲティングマトリクス分類（仕様書 Sheet1）──
+  // 行（工場格）: A=指定, B=認証, C=その他
+  // 列（IT投資意欲）: 1=大手メーカー系, 2=全国FC, 3=地元中堅, 4=個人零細, 5=その他
+  const classifyFactory = (name, certType) => {
+    const n = (name || '').replace(/\s/g, '');
+
+    // 行：工場格
+    const row = (() => {
+      if (!certType) return 'B';
+      if (certType.includes('指定')) return 'A';
+      if (certType.includes('認証')) return 'B';
+      return 'C';
+    })();
+
+    // 列：IT投資意欲（社名から推定）
+    const col = (() => {
+      // 1: 大手メーカー系（ディーラー・メーカー直営）
+      if (/トヨタ|ホンダ|日産|スズキ|ダイハツ|三菱|マツダ|スバル|いすゞ|日野|三菱ふそう|沖縄ふそう|VolksWagen|ＶＷ|BMW|ベンツ|レクサス|コベルコ|日立建機|コマツ/.test(n)) return 1;
+      // 2: 全国FC・チェーン系
+      if (/ユーポス|コバック|オートバックス|イエローハット|ガリバー|ネクステージ|ビッグモーター|タイムズカー|ジェームス|ジャパン|りゅうせき|KANEHIDE|かねひで|コスモ|出光|ENEOS|エネオス|ゴープラス|ロータス|ライコランド|カーコンビニ|マングラ|マンガ倉庫/.test(n)) return 2;
+      // 4: 個人名・屋号系（小規模の特徴: 「〇〇モータース」「〇〇自動車」で代表者名が入る、資・合・名）
+      if (/^(有|資|合|名)/.test(n.replace(/[（(].*?[)）]/g, ''))) {
+        // 有限会社でも地元感があれば3に上げる余地があるが基本4
+        if (n.length < 12) return 4;
+      }
+      // 1人っぽい名前（漢字2〜3文字＋モータース・自動車・整備）
+      if (/^[\u4e00-\u9fa5]{2,4}(モータース|自動車|整備|オート|ガレージ|ボディ|鈑金)/.test(n)) return 4;
+      // 3: 地元中堅（デフォルト — 株式会社で地元名）
+      return 3;
+    })();
+
+    // 優先度マッピング（仕様書の色）
+    const priorityMap = {
+      'A1':1,'A2':2,'A3':1,'A4':3,'A5':4,
+      'B1':2,'B2':2,'B3':1,'B4':3,'B5':4,
+      'C1':3,'C2':3,'C3':2,'C4':4,'C5':4,
+    };
+    const key = `${row}${col}`;
+    const priority = priorityMap[key] || 3;
+
+    const priorityColors = { 1: '#c2410c', 2: '#65a30d', 3: '#475569', 4: '#ca8a04' };
+    const priorityLabels = { 1: '最優先', 2: '次点', 3: '標準', 4: '後回し' };
+
+    return { row, col, key, priority, color: priorityColors[priority], label: priorityLabels[priority] };
+  };
+
   // nosite_none 工場を通常ハントに送る
   const sendToHunt = (ken) => {
     setRegion("__custom__");
@@ -2217,7 +2263,6 @@ JSON配列のみ返すこと（説明文不要）:
 
             {jaspaResults.length > 0 && (() => {
               const errOrder = ["ssl","dns","notfound","content_bad","kakari","nosite_none","unconfirmed","ok"];
-              const sorted = [...jaspaResults].sort((a,b) => errOrder.indexOf(a.errorType) - errOrder.indexOf(b.errorType));
               const counts = {};
               errOrder.forEach(e => { counts[e] = jaspaResults.filter(r => r.errorType === e).length; });
               // 問題あり = ok・unconfirmed以外
@@ -2225,6 +2270,26 @@ JSON配列のみ返すこと（説明文不要）:
               const unconfirmedCount = counts["unconfirmed"] || 0;
               // okでも大目的スコアが高い（要注目）サイト
               const okHighScore = jaspaResults.filter(r => r.errorType === "ok" && r.daimokuteki && calcDasaiFromDaimoku(r.daimokuteki) >= 40);
+
+              // マトリクス分類をキャッシュ
+              const classified = jaspaResults.map(r => ({ ...r, _cls: classifyFactory(r.name, r.certType) }));
+
+              // priority優先 → errorType順でソート
+              const prioritySortScore = r => {
+                const p = r._cls ? r._cls.priority : 3;
+                const e = errOrder.indexOf(r.errorType);
+                return p * 10 + e;
+              };
+              const sorted = [...classified].sort((a, b) => prioritySortScore(a) - prioritySortScore(b));
+
+              // マトリクス集計
+              const matrixCounts = {};
+              const matrixPriority1 = [];
+              classified.filter(r => r.errorType !== 'ok' && r.errorType !== 'unconfirmed').forEach(r => {
+                const k = r._cls.key;
+                matrixCounts[k] = (matrixCounts[k] || 0) + 1;
+                if (r._cls.priority === 1) matrixPriority1.push(r);
+              });
 
               return (
                 <div>
@@ -2264,6 +2329,86 @@ JSON配列のみ返すこと（説明文不要）:
                       </div>
                     </div>
                   )}
+
+                  {/* ── ターゲティングマトリクス ── */}
+                  {(() => {
+                    const rows = ['A','B','C'];
+                    const cols = [1,2,3,4,5];
+                    const rowLabels = { A:'指定', B:'認証', C:'その他' };
+                    const colLabels = { 1:'大手メーカー系', 2:'全国FC', 3:'地元中堅', 4:'個人零細', 5:'その他' };
+                    const priorityColors = {
+                      1:'#c2410c', 2:'#65a30d', 3:'#475569', 4:'#ca8a04'
+                    };
+                    const cellPriority = {
+                      A1:1,A2:2,A3:1,A4:3,A5:4,
+                      B1:2,B2:2,B3:1,B4:3,B5:4,
+                      C1:3,C2:3,C3:2,C4:4,C5:4,
+                    };
+                    return (
+                      <details style={{ marginBottom: 14 }}>
+                        <summary style={{ fontSize: 12, fontWeight: 700, color: "#f59e0b", cursor: "pointer", padding: "6px 0", display: "flex", alignItems: "center", gap: 8 }}>
+                          <span>🎯 ターゲティングマトリクス（問題あり {problemCount}件の内訳）</span>
+                          <span style={{ fontSize: 11, color: "#c2410c", fontWeight: 900 }}>
+                            最優先: {matrixPriority1.length}件
+                          </span>
+                        </summary>
+                        <div style={{ marginTop: 8, overflowX: "auto" }}>
+                          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                            <thead>
+                              <tr>
+                                <th style={{ padding: "4px 6px", color: text2, textAlign: "left", fontWeight: 400 }}></th>
+                                {cols.map(c => (
+                                  <th key={c} style={{ padding: "4px 6px", color: text2, fontWeight: 700, textAlign: "center", fontSize: 10 }}>
+                                    {c}<br/><span style={{ fontWeight: 400, fontSize: 9 }}>{colLabels[c]}</span>
+                                  </th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {rows.map(r => (
+                                <tr key={r}>
+                                  <td style={{ padding: "4px 8px", color: text2, fontWeight: 700, fontSize: 11, whiteSpace: "nowrap" }}>
+                                    {r} {rowLabels[r]}
+                                  </td>
+                                  {cols.map(c => {
+                                    const k = `${r}${c}`;
+                                    const cnt = matrixCounts[k] || 0;
+                                    const pri = cellPriority[k] || 3;
+                                    const col = priorityColors[pri];
+                                    return (
+                                      <td key={c} style={{ padding: "6px 4px", textAlign: "center" }}>
+                                        <div style={{
+                                          background: cnt > 0 ? col + "22" : "#0a0a14",
+                                          border: `1px solid ${cnt > 0 ? col + "66" : "#1e1e3a"}`,
+                                          borderRadius: 6,
+                                          padding: "4px 2px",
+                                          minWidth: 36,
+                                        }}>
+                                          <div style={{ fontSize: 16, fontWeight: 900, color: cnt > 0 ? col : "#374151" }}>{cnt}</div>
+                                          <div style={{ fontSize: 8, color: cnt > 0 ? col : "#374151", marginTop: 1 }}>
+                                            {pri===1?'最優先':pri===2?'次点':pri===3?'標準':'後回し'}
+                                          </div>
+                                        </div>
+                                      </td>
+                                    );
+                                  })}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {/* 凡例 */}
+                          <div style={{ display: "flex", gap: 12, marginTop: 8, flexWrap: "wrap" }}>
+                            {[['#c2410c','1: 最優先（地元中堅全般）'],['#65a30d','2: 次点'],['#475569','3: 標準'],['#ca8a04','4: 後回し']].map(([col,lbl]) => (
+                              <div key={col} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, color: text2 }}>
+                                <div style={{ width: 10, height: 10, background: col, borderRadius: 2 }}/>
+                                {lbl}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </details>
+                    );
+                  })()}
 
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
                     <div style={{ fontSize: 13, fontWeight: 700, color: text2 }}>
@@ -2436,6 +2581,7 @@ JSON配列のみ返すこと（説明文不要）:
 
                   {sorted.filter(r => r.errorType !== "ok" && r.errorType !== "unconfirmed").map(r => {
                     const et = ERROR_TYPES[r.errorType] || ERROR_TYPES.nosite_none;
+                    const cls = r._cls || classifyFactory(r.name, r.certType);
                     const alreadyAdded = leads.find(l => l.phone === r.phone && r.phone);
                     const dasai = r.errorType==="ssl"||r.errorType==="dns" ? 95
                       : r.errorType==="notfound" ? 90
@@ -2458,6 +2604,10 @@ JSON配列のみ返すこと（説明文不要）:
                             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
                               <span style={{ fontSize: 16 }}>{et.icon}</span>
                               <span style={{ fontSize: 14, fontWeight: 700 }}>{r.name}</span>
+                              {/* マトリクス分類バッジ */}
+                              <span style={{ fontSize: 11, fontWeight: 900, color: cls.color, background: cls.color + "22", border: `2px solid ${cls.color}`, borderRadius: 4, padding: "1px 8px", letterSpacing: 1 }}>
+                                {cls.key} {cls.label}
+                              </span>
                               <span style={{ fontSize: 11, fontWeight: 700, color: et.color, background: et.color + "18", border: `1px solid ${et.color}44`, borderRadius: 4, padding: "2px 8px" }}>
                                 {et.label}
                               </span>
