@@ -93,7 +93,7 @@ const JASPA_LIST = [
   { ken: "大分", url: "http://www.jaspa-oita.or.jp/", searchUrl: "http://www.jaspa-oita.or.jp/" },
   { ken: "宮崎", url: "http://jaspa-miyazaki.or.jp/", searchUrl: "http://jaspa-miyazaki.or.jp/" },
   { ken: "鹿児島", url: "http://www.kjss.or.jp/", searchUrl: "http://www.kjss.or.jp/" },
-  { ken: "沖縄", url: "http://www.jaspa-okinawa.or.jp/", searchUrl: "http://www.jaspa-okinawa.or.jp/" },
+  { ken: "沖縄", url: "http://www.jaspa-okinawa.or.jp/", searchUrl: "http://www.jaspa-okinawa.or.jp/m/" },
 ];
 
 // 後方互換用
@@ -731,16 +731,25 @@ approach: "攻め"=集客課題, "守り"=採用課題
         .replace(/<style[\s\S]*?<\/style>/gi, "")
         .replace(/<!--[\s\S]*?-->/g, "");
 
-      // 1ページ分のHTMLからsubページリンクを抽出
+      // 1ページ分のHTMLからsubページリンクを抽出（拡張子なし・スラッシュ終端も含む）
       const extractSubLinks = (html, baseUrl) => {
         const base = new URL(baseUrl);
         const found = new Set();
-        const re = /href=["']([^"'#?]+\.html?)["']/gi;
+        // .html/.htm だけでなく、スラッシュ終端・拡張子なしパスも対象
+        const re = /href=["']([^"'#?]+)["']/gi;
         let m;
         while ((m = re.exec(html)) !== null) {
+          const href = m[1].trim();
+          if (!href || href.startsWith('javascript') || href.startsWith('mailto') || href.startsWith('tel:')) continue;
           try {
-            const abs = new URL(m[1], base).href;
-            if (abs.startsWith(base.origin) && abs !== baseUrl) found.add(abs);
+            const abs = new URL(href, base).href;
+            // 同一オリジンかつ現在のURL以外
+            if (abs.startsWith(base.origin) && abs !== baseUrl && abs !== base.origin + '/') {
+              // 外部リソース（画像・CSS・JS）を除外
+              if (!/\.(css|js|png|jpg|gif|svg|ico|pdf|zip|xml|json)(\?|$)/i.test(abs)) {
+                found.add(abs);
+              }
+            }
           } catch {}
         }
         return [...found];
